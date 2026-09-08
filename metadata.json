@@ -1,0 +1,6 @@
+{
+  "name": "LLD Practice Platform",
+  "description": "Low-Level Design practice platform with deterministic and AI-powered evaluation against structured rubrics, state-machine tracked submissions, and iterative learning loops.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

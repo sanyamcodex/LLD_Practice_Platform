@@ -1,0 +1,66 @@
+import { Evaluation } from '../entities/Evaluation';
+import { Problem } from '../entities/Problem';
+import { Rubric } from '../entities/Rubric';
+import { Submission } from '../entities/Submission';
+import { LLMClient } from '../ports/LLMClient';
+import { EvaluationStrategy } from './EvaluationStrategy';
+
+/**
+ * AIRubricEvaluator
+ * Implements EvaluationStrategy port.
+ *
+ * Calls the LLMClient port with a timeout and structured response verification.
+ * Evaluates semantic judgment dimensions: responsibility assignment, coupling/cohesion,
+ * interface encapsulation, pattern selection, extensibility reasoning, and trade-offs.
+ */
+export class AIRubricEvaluator implements EvaluationStrategy {
+  public readonly type = 'AI' as const;
+
+  constructor(
+    private readonly llmClient: LLMClient,
+    private readonly timeoutMs: number = 20000
+  ) {}
+
+  async evaluate(submission: Submission, problem: Problem, rubric: Rubric): Promise<Evaluation> {
+    // Run with timeout promise
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`AI Evaluation timed out after ${this.timeoutMs}ms`)), this.timeoutMs);
+    });
+
+    const evalPromise = this.llmClient.evaluateDesign({
+      submission,
+      problem,
+      rubric,
+    });
+
+    const response = await Promise.race([evalPromise, timeoutPromise]);
+
+    // Ensure all 7 rubric criteria have representation
+    const results = response.results || [];
+    for (const criterion of rubric.criteria) {
+      if (!results.some((r) => r.criterionKey === criterion.key)) {
+        results.push({
+          criterionKey: criterion.key,
+          score: 3,
+          evidence: 'Section omitted or not explicitly addressed.',
+          concern: 'Insufficient detail to evaluate this dimension fully.',
+          suggestion: 'Provide explicit architectural reasoning for this criterion.',
+          confidence: 0.5,
+        });
+      }
+    }
+
+    return {
+      id: `eval_ai_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      submissionId: submission.id,
+      evaluatorType: 'AI',
+      rubricResults: results,
+      overallSummary: response.overallSummary || 'AI Rubric Evaluation completed.',
+      createdAt: new Date().toISOString(),
+      metadata: {
+        model: 'gemini-3.8-flash',
+        evaluator: 'AIRubricEvaluator',
+      },
+    };
+  }
+}
