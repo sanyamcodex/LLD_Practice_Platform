@@ -25,8 +25,7 @@
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",
-    "react-dom": "^19.0.1",
-    "vite": "^6.2.3"
+    "react-dom": "^19.0.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -42,7 +41,10 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3",
+    "vite": "^6.4.3",
     "vitest": "^5.0.0"
+  },
+  "overrides": {
+    "vite": "^6.4.3"
   }
 }

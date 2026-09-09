@@ -2,9 +2,8 @@ services:
   - type: web
     name: lld-practice-backend
     runtime: node
-    rootDir: backend
-    buildCommand: npm install && npm run build
-    startCommand: node dist/server.cjs
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npm start
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
