@@ -18,7 +18,7 @@ export class AIRubricEvaluator implements EvaluationStrategy {
 
   constructor(
     private readonly llmClient: LLMClient,
-    private readonly timeoutMs: number = 28000
+    private readonly timeoutMs: number = 18000
   ) {}
 
   async evaluate(submission: Submission, problem: Problem, rubric: Rubric): Promise<Evaluation> {
@@ -64,7 +64,7 @@ export class AIRubricEvaluator implements EvaluationStrategy {
       overallSummary: response.overallSummary || 'AI Rubric Evaluation completed.',
       createdAt: new Date().toISOString(),
       metadata: {
-        model: response.modelUsed || 'gemini-3.8-flash',
+        model: response.modelUsed || 'gemini-3.5-flash-lite',
         evaluator: 'AIRubricEvaluator',
       },
     };

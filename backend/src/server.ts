@@ -103,7 +103,7 @@ export async function createBackendApp(options?: { useStubAI?: boolean }): Promi
   // StubAIEvaluator is strictly gated behind options?.useStubAI for hermetic automated testing.
   const aiEvaluator = options?.useStubAI
     ? new StubAIEvaluator()
-    : new AIRubricEvaluator(geminiClient, 28000);
+    : new AIRubricEvaluator(geminiClient, 18000);
 
   const orchestrator = new EvaluationOrchestrator(
     deterministicEvaluator,

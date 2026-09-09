@@ -26,8 +26,12 @@ export interface OrchestratorResult {
  *    orchestrator creates a placeholder AI evaluation marking "AI evaluation unavailable",
  *    persists the deterministic evaluation, and transitions submission to COMPLETED.
  *    Submissions NEVER get left stuck in EVALUATING!
+ * 4. Duplicate Evaluation Protection: Submissions are evaluated exactly once unless
+ *    explicitly re-submitted for reevaluation.
  */
 export class EvaluationOrchestrator {
+  private activeSubmissions = new Set<string>();
+
   constructor(
     private readonly deterministicEvaluator: EvaluationStrategy,
     private readonly aiEvaluator: EvaluationStrategy | null,
@@ -40,7 +44,40 @@ export class EvaluationOrchestrator {
     problem: Problem,
     rubric: Rubric
   ): Promise<OrchestratorResult> {
-    const stateMachine = new SubmissionStateMachine(submission.status);
+    // Duplicate evaluation protection: prevent concurrent evaluations for the same submission
+    if (this.activeSubmissions.has(submission.id)) {
+      console.warn(`[EvaluationOrchestrator] Duplicate evaluation prevented: Submission ${submission.id} is already actively evaluating.`);
+      const evaluations = await this.evaluationRepository.findBySubmissionId(submission.id);
+      const detEval = evaluations.find((e) => e.evaluatorType === 'DETERMINISTIC') || null;
+      const aiEval = evaluations.find((e) => e.evaluatorType === 'AI') || null;
+      return {
+        submissionId: submission.id,
+        deterministicEvaluation: detEval || ({} as Evaluation),
+        aiEvaluation: aiEval || undefined,
+        aiAvailable: Boolean(aiEval && !aiEval.metadata?.fallback),
+        status: submission.status === 'FAILED' ? 'FAILED' : 'COMPLETED',
+      };
+    }
+
+    // Duplicate evaluation protection: if already COMPLETED and not re-submitted for reevaluation, skip
+    const freshSubmission = await this.submissionRepository.findById(submission.id);
+    if (freshSubmission && freshSubmission.status === 'COMPLETED') {
+      console.warn(`[EvaluationOrchestrator] Duplicate evaluation prevented: Submission ${submission.id} is already COMPLETED.`);
+      const evaluations = await this.evaluationRepository.findBySubmissionId(submission.id);
+      const detEval = evaluations.find((e) => e.evaluatorType === 'DETERMINISTIC') || null;
+      const aiEval = evaluations.find((e) => e.evaluatorType === 'AI') || null;
+      return {
+        submissionId: submission.id,
+        deterministicEvaluation: detEval || ({} as Evaluation),
+        aiEvaluation: aiEval || undefined,
+        aiAvailable: Boolean(aiEval && !aiEval.metadata?.fallback),
+        status: 'COMPLETED',
+      };
+    }
+
+    this.activeSubmissions.add(submission.id);
+
+    const stateMachine = new SubmissionStateMachine(freshSubmission?.status || submission.status);
 
     // Transition from SUBMITTED -> EVALUATING
     if (stateMachine.canTransitionTo('EVALUATING')) {
@@ -121,6 +158,8 @@ export class EvaluationOrchestrator {
         status: 'FAILED',
         error: fatalError?.message,
       };
+    } finally {
+      this.activeSubmissions.delete(submission.id);
     }
   }
 }

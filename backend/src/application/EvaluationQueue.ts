@@ -14,11 +14,14 @@ export interface EvaluationJob {
  * In-process asynchronous job queue.
  * Satisfies NFR2 (non-blocking HTTP response) and NFR3 (worker errors do not crash main process).
  * Submissions are enqueued immediately, and background evaluation runs without delaying the client.
+ * Features duplicate evaluation prevention for jobs already queued or actively evaluating.
  */
 export class EvaluationQueue {
   private queue: EvaluationJob[] = [];
   private isProcessing = false;
   private emitter = new EventEmitter();
+  private pendingJobIds = new Set<string>();
+  private inFlightJobIds = new Set<string>();
 
   constructor(
     private readonly orchestrator: EvaluationOrchestrator,
@@ -31,12 +34,19 @@ export class EvaluationQueue {
     });
   }
 
-  public enqueue(submissionId: string): void {
+  public enqueue(submissionId: string): boolean {
+    if (this.pendingJobIds.has(submissionId) || this.inFlightJobIds.has(submissionId)) {
+      console.warn(`[EvaluationQueue] Duplicate enqueue ignored for submission ${submissionId}`);
+      return false;
+    }
+
+    this.pendingJobIds.add(submissionId);
     this.queue.push({ submissionId });
     // Trigger asynchronous processing on next microtask
     setImmediate(() => {
       this.emitter.emit('job_enqueued');
     });
+    return true;
   }
 
   private async processNext(): Promise<void> {
@@ -52,12 +62,13 @@ export class EvaluationQueue {
       return;
     }
 
+    this.pendingJobIds.delete(job.submissionId);
+    this.inFlightJobIds.add(job.submissionId);
+
     try {
       const submission = await this.submissionRepository.findById(job.submissionId);
       if (!submission) {
         console.error(`[EvaluationQueue] Submission ${job.submissionId} not found`);
-        this.isProcessing = false;
-        this.processNext();
         return;
       }
 
@@ -65,16 +76,12 @@ export class EvaluationQueue {
       const attempt = await this.attemptRepository.findById(submission.attemptId);
       if (!attempt) {
         console.error(`[EvaluationQueue] Attempt ${submission.attemptId} not found for submission ${submission.id}`);
-        this.isProcessing = false;
-        this.processNext();
         return;
       }
 
       const problem = await this.problemRepository.findById(attempt.problemId);
       if (!problem) {
         console.error(`[EvaluationQueue] Problem ${attempt.problemId} not found for submission ${submission.id}`);
-        this.isProcessing = false;
-        this.processNext();
         return;
       }
 
@@ -83,6 +90,7 @@ export class EvaluationQueue {
     } catch (err) {
       console.error(`[EvaluationQueue] Unexpected failure processing job ${job.submissionId}:`, err);
     } finally {
+      this.inFlightJobIds.delete(job.submissionId);
       this.isProcessing = false;
       if (this.queue.length > 0) {
         this.processNext();

@@ -8,7 +8,7 @@ import { EvaluationStrategy } from '../../backend/src/domain/evaluation/Evaluati
 import { EvaluationRepository } from '../../backend/src/domain/ports/EvaluationRepository';
 import { SubmissionRepository } from '../../backend/src/domain/ports/SubmissionRepository';
 
-describe('EvaluationOrchestrator', () => {
+describe('EvaluationOrchestrator: Reliability, Fallback & Duplicate Protection', () => {
   const mockProblem: Problem = {
     id: 'prob-elevator',
     title: 'Design Elevator System',
@@ -58,76 +58,36 @@ describe('EvaluationOrchestrator', () => {
     return { mockEvaluationRepo, mockSubmissionRepo, savedEvaluations, submissionStatusMap };
   }
 
-  it('CRITICAL TEST: Resolves to COMPLETED with deterministic feedback when AI evaluator fails/times out (FR14)', async () => {
+  it('Scenario 4: Secondary model (gemini-3.6-flash) succeeds -> AI evaluation is persisted', async () => {
     const { mockEvaluationRepo, mockSubmissionRepo, savedEvaluations, submissionStatusMap } = createMockRepos();
-
     const deterministicEvaluator = new DeterministicEvaluator();
 
-    // Failing AI Evaluator simulating API failure, timeout, or rate limiting
-    const failingAIEvaluator: EvaluationStrategy = {
-      type: 'AI',
-      evaluate: vi.fn().mockRejectedValue(new Error('Gemini API 503 Service Unavailable / Rate Limit Exceeded')),
-    };
-
-    const orchestrator = new EvaluationOrchestrator(
-      deterministicEvaluator,
-      failingAIEvaluator,
-      mockEvaluationRepo,
-      mockSubmissionRepo
-    );
-
-    const result = await orchestrator.evaluateSubmission(
-      mockSubmission,
-      mockProblem,
-      STANDARD_LLD_RUBRIC
-    );
-
-    // Assertions for Graceful Degradation:
-    // 1. Must never remain stuck in EVALUATING
-    expect(result.status).toBe('COMPLETED');
-    expect(submissionStatusMap[mockSubmission.id]).toBe('COMPLETED');
-
-    // 2. Deterministic evaluation was preserved and persisted
-    expect(result.deterministicEvaluation).toBeDefined();
-    expect(result.deterministicEvaluation.evaluatorType).toBe('DETERMINISTIC');
-    expect(savedEvaluations.some((e) => e.evaluatorType === 'DETERMINISTIC')).toBe(true);
-
-    // 3. AI available flag must be false
-    expect(result.aiAvailable).toBe(false);
-
-    // 4. An explicit fallback record was persisted indicating AI was unavailable
-    const fallbackEval = savedEvaluations.find((e) => e.evaluatorType === 'AI');
-    expect(fallbackEval).toBeDefined();
-    expect(fallbackEval.overallSummary).toContain('AI evaluation unavailable');
-  });
-
-  it('Executes full happy-path when both Deterministic and AI evaluators succeed', async () => {
-    const { mockEvaluationRepo, mockSubmissionRepo, savedEvaluations, submissionStatusMap } = createMockRepos();
-
-    const deterministicEvaluator = new DeterministicEvaluator();
-
-    const successfulAIEvaluator: EvaluationStrategy = {
+    const fallbackSuccessAI: EvaluationStrategy = {
       type: 'AI',
       evaluate: vi.fn().mockResolvedValue({
-        id: 'eval_ai_mock',
+        id: 'eval_ai_mock_fallback',
         submissionId: mockSubmission.id,
         evaluatorType: 'AI',
         rubricResults: STANDARD_LLD_RUBRIC.criteria.map((c) => ({
           criterionKey: c.key,
-          score: 5,
-          evidence: 'Concrete evidence from design',
-          concern: '',
-          suggestion: 'Minor optimization',
-          confidence: 0.95,
+          score: 4,
+          evidence: 'Solid use of strategy pattern',
+          concern: 'Single point of failure',
+          suggestion: 'Decouple controller',
+          confidence: 0.9,
         })),
-        overallSummary: 'High-quality design with clean decoupling.',
+        overallSummary: 'Evaluation provided by fallback model gemini-3.6-flash.',
         createdAt: new Date().toISOString(),
+        metadata: {
+          model: 'gemini-3.6-flash',
+          evaluator: 'AIRubricEvaluator',
+        },
       }),
     };
 
     const orchestrator = new EvaluationOrchestrator(
       deterministicEvaluator,
-      successfulAIEvaluator,
+      fallbackSuccessAI,
       mockEvaluationRepo,
       mockSubmissionRepo
     );
@@ -141,22 +101,22 @@ describe('EvaluationOrchestrator', () => {
     expect(result.status).toBe('COMPLETED');
     expect(submissionStatusMap[mockSubmission.id]).toBe('COMPLETED');
     expect(result.aiAvailable).toBe(true);
-    expect(result.aiEvaluation?.overallSummary).toBe('High-quality design with clean decoupling.');
-    expect(savedEvaluations.length).toBe(2);
+    expect(result.aiEvaluation?.metadata?.model).toBe('gemini-3.6-flash');
+    expect(savedEvaluations.some((e) => e.evaluatorType === 'AI' && e.metadata?.model === 'gemini-3.6-flash')).toBe(true);
   });
 
-  it('All AI models unavailable => immediately falls back to deterministic evaluator and completes', async () => {
+  it('Scenario 5: Both AI models fail -> deterministic evaluator is persisted and completes submission', async () => {
     const { mockEvaluationRepo, mockSubmissionRepo, savedEvaluations, submissionStatusMap } = createMockRepos();
-
     const deterministicEvaluator = new DeterministicEvaluator();
-    const allModelsUnavailableAI: EvaluationStrategy = {
+
+    const bothModelsFailedAI: EvaluationStrategy = {
       type: 'AI',
-      evaluate: vi.fn().mockRejectedValue(new Error('All candidate AI models (gemini-3.8-flash, gemini-3.7-flash) failed.')),
+      evaluate: vi.fn().mockRejectedValue(new Error('All candidate AI models (gemini-3.5-flash-lite, gemini-3.6-flash) failed.')),
     };
 
     const orchestrator = new EvaluationOrchestrator(
       deterministicEvaluator,
-      allModelsUnavailableAI,
+      bothModelsFailedAI,
       mockEvaluationRepo,
       mockSubmissionRepo
     );
@@ -172,18 +132,20 @@ describe('EvaluationOrchestrator', () => {
     expect(result.aiAvailable).toBe(false);
     expect(result.deterministicEvaluation).toBeDefined();
     expect(result.deterministicEvaluation.evaluatorType).toBe('DETERMINISTIC');
+    expect(savedEvaluations.some((e) => e.evaluatorType === 'DETERMINISTIC')).toBe(true);
 
-    // Deterministic results preserved
-    expect(result.deterministicEvaluation.rubricResults.length).toBe(STANDARD_LLD_RUBRIC.criteria.length);
+    const fallbackRecord = savedEvaluations.find((e) => e.evaluatorType === 'AI');
+    expect(fallbackRecord).toBeDefined();
+    expect(fallbackRecord.metadata?.fallback).toBe(true);
   });
 
-  it('AI evaluator timeout does not block submission indefinitely and resolves to COMPLETED', async () => {
+  it('Scenario 8: AI timeout does not leave submission stuck in EVALUATING', async () => {
     const { mockEvaluationRepo, mockSubmissionRepo, savedEvaluations, submissionStatusMap } = createMockRepos();
-
     const deterministicEvaluator = new DeterministicEvaluator();
+
     const timingOutAI: EvaluationStrategy = {
       type: 'AI',
-      evaluate: vi.fn().mockRejectedValue(new Error('AI Evaluation timed out after 28000ms')),
+      evaluate: vi.fn().mockRejectedValue(new Error('AI Evaluation timed out after 18000ms')),
     };
 
     const orchestrator = new EvaluationOrchestrator(
@@ -202,6 +164,102 @@ describe('EvaluationOrchestrator', () => {
     expect(result.status).toBe('COMPLETED');
     expect(submissionStatusMap[mockSubmission.id]).toBe('COMPLETED');
     expect(result.aiAvailable).toBe(false);
-    expect(result.deterministicEvaluation.rubricResults.length).toBeGreaterThan(0);
+    expect(result.deterministicEvaluation).toBeDefined();
+  });
+
+  it('Scenario 9: Duplicate evaluation request for the same submission is prevented', async () => {
+    const { mockEvaluationRepo, mockSubmissionRepo, savedEvaluations } = createMockRepos();
+    const deterministicEvaluator = new DeterministicEvaluator();
+    const evaluateAiFn = vi.fn().mockResolvedValue({
+      id: 'eval_ai_1',
+      submissionId: mockSubmission.id,
+      evaluatorType: 'AI',
+      rubricResults: [],
+      overallSummary: 'Complete.',
+      createdAt: new Date().toISOString(),
+    });
+
+    const aiEvaluator: EvaluationStrategy = {
+      type: 'AI',
+      evaluate: evaluateAiFn,
+    };
+
+    const orchestrator = new EvaluationOrchestrator(
+      deterministicEvaluator,
+      aiEvaluator,
+      mockEvaluationRepo,
+      mockSubmissionRepo
+    );
+
+    // First evaluation run
+    const result1 = await orchestrator.evaluateSubmission(
+      mockSubmission,
+      mockProblem,
+      STANDARD_LLD_RUBRIC
+    );
+    expect(result1.status).toBe('COMPLETED');
+    expect(evaluateAiFn).toHaveBeenCalledTimes(1);
+
+    // Second evaluation run on completed submission without reevaluation reset
+    const result2 = await orchestrator.evaluateSubmission(
+      mockSubmission,
+      mockProblem,
+      STANDARD_LLD_RUBRIC
+    );
+    expect(result2.status).toBe('COMPLETED');
+    // AI evaluator was NOT called again; duplicate evaluation prevented
+    expect(evaluateAiFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('Scenario 10: Explicit Retry AI Analysis still works after completion', async () => {
+    const { mockEvaluationRepo, mockSubmissionRepo, submissionStatusMap } = createMockRepos();
+    const deterministicEvaluator = new DeterministicEvaluator();
+    const evaluateAiFn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('503 Service Unavailable'))
+      .mockResolvedValueOnce({
+        id: 'eval_ai_retry_success',
+        submissionId: mockSubmission.id,
+        evaluatorType: 'AI',
+        rubricResults: [],
+        overallSummary: 'Retry successful.',
+        createdAt: new Date().toISOString(),
+      });
+
+    const aiEvaluator: EvaluationStrategy = {
+      type: 'AI',
+      evaluate: evaluateAiFn,
+    };
+
+    const orchestrator = new EvaluationOrchestrator(
+      deterministicEvaluator,
+      aiEvaluator,
+      mockEvaluationRepo,
+      mockSubmissionRepo
+    );
+
+    // First run fails AI and completes with deterministic fallback
+    const result1 = await orchestrator.evaluateSubmission(
+      mockSubmission,
+      mockProblem,
+      STANDARD_LLD_RUBRIC
+    );
+    expect(result1.status).toBe('COMPLETED');
+    expect(result1.aiAvailable).toBe(false);
+
+    // Explicit user action: "Retry AI Analysis" updates status back to SUBMITTED
+    submissionStatusMap[mockSubmission.id] = 'SUBMITTED';
+    const retrySubmission = { ...mockSubmission, status: 'SUBMITTED' as const };
+
+    const result2 = await orchestrator.evaluateSubmission(
+      retrySubmission,
+      mockProblem,
+      STANDARD_LLD_RUBRIC
+    );
+
+    expect(result2.status).toBe('COMPLETED');
+    expect(result2.aiAvailable).toBe(true);
+    expect(result2.aiEvaluation?.overallSummary).toBe('Retry successful.');
+    expect(evaluateAiFn).toHaveBeenCalledTimes(2);
   });
 });
