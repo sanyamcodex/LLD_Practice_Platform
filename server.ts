@@ -1,12 +1,21 @@
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+  process.exit(1);
+});
+
 import express, { Express, Request, Response } from 'express';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import { config } from './backend/src/config/env';
 import { errorHandler } from './backend/src/api/middleware/errorHandler';
 import { PrismaProblemRepository } from './backend/src/infrastructure/repositories/PrismaProblemRepository';
 import { PrismaAttemptRepository } from './backend/src/infrastructure/repositories/PrismaAttemptRepository';
 import { PrismaSubmissionRepository } from './backend/src/infrastructure/repositories/PrismaSubmissionRepository';
 import { PrismaEvaluationRepository } from './backend/src/infrastructure/repositories/PrismaEvaluationRepository';
+import { checkDatabaseConnection } from './backend/src/infrastructure/prisma/client';
 import { seedProblems } from './backend/src/infrastructure/seed/seedProblems';
 import { DeterministicEvaluator } from './backend/src/domain/evaluation/DeterministicEvaluator';
 import { AIRubricEvaluator } from './backend/src/domain/evaluation/AIRubricEvaluator';
@@ -27,14 +36,29 @@ export async function createBackendApp(options?: { useStubAI?: boolean }): Promi
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // Repositories
-  const problemRepo = new PrismaProblemRepository();
-  const attemptRepo = new PrismaAttemptRepository();
-  const submissionRepo = new PrismaSubmissionRepository();
-  const evaluationRepo = new PrismaEvaluationRepository();
+  // Startup database & repository initialization wrapped in explicit error logging
+  let problemRepo: PrismaProblemRepository;
+  let attemptRepo: PrismaAttemptRepository;
+  let submissionRepo: PrismaSubmissionRepository;
+  let evaluationRepo: PrismaEvaluationRepository;
 
-  // Seed problems at startup
-  await seedProblems(problemRepo);
+  try {
+    console.log('[Startup] Initializing database and repositories...');
+    if (process.env.DATABASE_URL && !options?.useStubAI) {
+      await checkDatabaseConnection();
+    }
+    problemRepo = new PrismaProblemRepository();
+    attemptRepo = new PrismaAttemptRepository();
+    submissionRepo = new PrismaSubmissionRepository();
+    evaluationRepo = new PrismaEvaluationRepository();
+
+    // Seed problems at startup
+    await seedProblems(problemRepo);
+    console.log('[Startup] Database and problem repositories ready.');
+  } catch (dbErr) {
+    console.error('FATAL DATABASE / PRISMA INITIALIZATION ERROR:', dbErr);
+    throw dbErr;
+  }
 
   // Evaluators & Orchestrator
   const deterministicEvaluator = new DeterministicEvaluator();
@@ -85,10 +109,13 @@ export async function createBackendApp(options?: { useStubAI?: boolean }): Promi
 
 export async function startServer(): Promise<void> {
   const app = await createBackendApp();
-  const PORT = config.port || 3000;
+  const PORT = process.env.NODE_ENV === 'production' && process.env.PORT && process.env.PORT !== '8080'
+    ? parseInt(process.env.PORT, 10)
+    : 3000;
 
   // Mount Vite middleware for dev or serve static files in production
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -98,7 +125,7 @@ export async function startServer(): Promise<void> {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req: Request, res: Response) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -106,12 +133,14 @@ export async function startServer(): Promise<void> {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server listening on port ${PORT}`);
     console.log(`[LLD Practice Platform] Server running on http://0.0.0.0:${PORT}`);
   });
 }
 
-// Auto-start if executed directly
-if (process.argv[1] && process.argv[1].includes('server.ts')) {
+// Auto-start if not running under a test runner (e.g. vitest)
+const isTestEnvironment = Boolean(process.env.VITEST || process.env.NODE_ENV === 'test');
+if (!isTestEnvironment) {
   startServer().catch((err) => {
     console.error('Fatal failure starting server:', err);
     process.exit(1);
