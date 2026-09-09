@@ -7,6 +7,7 @@ export interface AppConfig {
   databaseUrl: string;
   geminiApiKey: string;
   appUrl: string;
+  allowedOrigin: string;
 }
 
 export const config: AppConfig = {
@@ -17,4 +18,5 @@ export const config: AppConfig = {
   databaseUrl: process.env.DATABASE_URL || 'file:./dev.db',
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   appUrl: process.env.APP_URL || 'http://localhost:3000',
+  allowedOrigin: process.env.ALLOWED_ORIGIN || '*',
 };

@@ -8,7 +8,9 @@ import {
   ProblemHistoryResponse,
 } from '../types';
 
-const rawBaseUrl = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) || '';
+// In Vercel, set VITE_API_URL to your deployed Render URL (e.g. https://your-app.onrender.com)
+// In local dev, falls back to empty string (which uses Vite proxy) or http://localhost:3000
+const rawBaseUrl = import.meta.env.VITE_API_URL || '';
 export const API_BASE_URL = rawBaseUrl.replace(/\/+$/, '');
 
 function getUrl(endpoint: string): string {
@@ -16,7 +18,7 @@ function getUrl(endpoint: string): string {
   return `${API_BASE_URL}${cleanPath}`;
 }
 
-export const api = {
+export const apiClient = {
   async getProblems(): Promise<Problem[]> {
     const res = await fetch(getUrl('/api/problems'));
     if (!res.ok) throw new Error('Failed to fetch problems');
@@ -90,3 +92,5 @@ export const api = {
     return res.json();
   },
 };
+
+export const api = apiClient;

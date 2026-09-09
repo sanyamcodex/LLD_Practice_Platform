@@ -1,5 +1,5 @@
-// Prisma schema for LLD Practice Platform
-// Configured for PostgreSQL (Neon) and cloud deployments
+// Canonical Prisma schema for LLD Practice Platform
+// Configured for PostgreSQL (Neon) and Render cloud deployment
 
 generator client {
   provider = "prisma-client-js"
@@ -34,13 +34,13 @@ enum EvaluatorType {
 }
 
 model Problem {
-  id                 String    @id @default(uuid())
+  id                 String     @id @default(uuid())
   title              String
   description        String
-  difficulty         String    // Maps to Difficulty enum
-  futureRequirements String    // Stored as JSON array of strings
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  difficulty         Difficulty
+  futureRequirements String     // Stored as JSON array of strings
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
 
   attempts           Attempt[]
 
@@ -48,37 +48,37 @@ model Problem {
 }
 
 model Attempt {
-  id                         String       @id @default(uuid())
+  id                         String        @id @default(uuid())
   problemId                  String
   learnerId                  String
-  status                     String       @default("IN_PROGRESS") // AttemptStatus
-  assumptions                String       @default("")
-  classesAndResponsibilities String       @default("")
-  relationships              String       @default("")
-  extensibilityAnswer        String       @default("")
-  createdAt                  DateTime     @default(now())
-  updatedAt                  DateTime     @updatedAt
+  status                     AttemptStatus @default(IN_PROGRESS)
+  assumptions                String        @default("")
+  classesAndResponsibilities String        @default("")
+  relationships              String        @default("")
+  extensibilityAnswer        String        @default("")
+  createdAt                  DateTime      @default(now())
+  updatedAt                  DateTime      @updatedAt
 
-  problem                    Problem      @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  problem                    Problem       @relation(fields: [problemId], references: [id], onDelete: Cascade)
   submissions                Submission[]
 
   @@map("attempts")
 }
 
 model Submission {
-  id                         String        @id @default(uuid())
+  id                         String           @id @default(uuid())
   attemptId                  String
-  status                     String        @default("SUBMITTED") // SubmissionStatus
-  contentHash                String        // Used for idempotency checks
+  status                     SubmissionStatus @default(SUBMITTED)
+  contentHash                String           // Used for idempotency checks
   assumptions                String
   classesAndResponsibilities String
   relationships              String
   extensibilityAnswer        String
   failureReason              String?
-  createdAt                  DateTime      @default(now())
+  createdAt                  DateTime         @default(now())
   completedAt                DateTime?
 
-  attempt                    Attempt       @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  attempt                    Attempt          @relation(fields: [attemptId], references: [id], onDelete: Cascade)
   evaluations                Evaluation[]
 
   @@index([attemptId, contentHash])
@@ -86,15 +86,15 @@ model Submission {
 }
 
 model Evaluation {
-  id             String       @id @default(uuid())
+  id             String        @id @default(uuid())
   submissionId   String
-  evaluatorType  String       // EvaluatorType: DETERMINISTIC | AI
-  rubricResults  String       // JSON-encoded CriterionResult[]
+  evaluatorType  EvaluatorType
+  rubricResults  String        // JSON-encoded CriterionResult[]
   overallSummary String
-  metadata       String?      // JSON-encoded metadata
-  createdAt      DateTime     @default(now())
+  metadata       String?       // JSON-encoded metadata
+  createdAt      DateTime      @default(now())
 
-  submission     Submission   @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  submission     Submission    @relation(fields: [submissionId], references: [id], onDelete: Cascade)
 
   @@index([submissionId])
   @@map("evaluations")

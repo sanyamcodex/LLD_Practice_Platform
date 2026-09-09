@@ -1,20 +1,33 @@
 import { Submission, SubmissionStatus } from '../../domain/entities/Submission';
 import { SubmissionRepository } from '../../domain/ports/SubmissionRepository';
 import { DatabaseStorage } from './DatabaseStorage';
+import { SubmissionStatus as PrismaSubmissionStatus } from '@prisma/client';
 
-interface StoredSubmissionRecord extends Submission {
+interface StoredSubmissionRecord extends Omit<Submission, 'status'> {
+  status: PrismaSubmissionStatus;
   contentHash: string;
 }
 
 export class PrismaSubmissionRepository implements SubmissionRepository {
   private db = DatabaseStorage.getInstance();
 
+  private toDomain(record: StoredSubmissionRecord): Submission {
+    const { contentHash, ...submission } = record;
+    return {
+      ...submission,
+      status: record.status as SubmissionStatus, // Mapping Prisma SubmissionStatus -> Domain SubmissionStatus
+    };
+  }
+
+  private toPrismaStatus(status: SubmissionStatus): PrismaSubmissionStatus {
+    return status as PrismaSubmissionStatus; // Mapping Domain SubmissionStatus -> Prisma SubmissionStatus
+  }
+
   async findById(id: string): Promise<Submission | null> {
     const table = this.db.get('submissions');
     const item = table[id] as StoredSubmissionRecord | undefined;
     if (!item) return null;
-    const { contentHash, ...submission } = item;
-    return submission;
+    return this.toDomain(item);
   }
 
   async findByAttemptId(attemptId: string): Promise<Submission[]> {
@@ -23,7 +36,7 @@ export class PrismaSubmissionRepository implements SubmissionRepository {
     return all
       .filter((s) => s.attemptId === attemptId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map(({ contentHash, ...s }) => s);
+      .map((record) => this.toDomain(record));
   }
 
   async findByLearnerId(learnerId: string): Promise<Submission[]> {
@@ -39,7 +52,7 @@ export class PrismaSubmissionRepository implements SubmissionRepository {
     return all
       .filter((s) => learnerAttemptIds.has(s.attemptId))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map(({ contentHash, ...s }) => s);
+      .map((record) => this.toDomain(record));
   }
 
   async findExistingNonFailed(attemptId: string, contentHash: string): Promise<Submission | null> {
@@ -49,19 +62,19 @@ export class PrismaSubmissionRepository implements SubmissionRepository {
       (s) => s.attemptId === attemptId && s.contentHash === contentHash && s.status !== 'FAILED'
     );
     if (!match) return null;
-    const { contentHash: _ch, ...submission } = match;
-    return submission;
+    return this.toDomain(match);
   }
 
   async save(submission: Submission, contentHash: string): Promise<Submission> {
     const table = this.db.get('submissions');
     const record: StoredSubmissionRecord = {
       ...submission,
+      status: this.toPrismaStatus(submission.status),
       contentHash,
     };
     table[submission.id] = record;
     this.db.flush();
-    return submission;
+    return this.toDomain(record);
   }
 
   async updateStatus(id: string, status: SubmissionStatus, failureReason?: string): Promise<Submission> {
@@ -70,7 +83,7 @@ export class PrismaSubmissionRepository implements SubmissionRepository {
     if (!record) {
       throw new Error(`Submission with id ${id} not found`);
     }
-    record.status = status;
+    record.status = this.toPrismaStatus(status);
     if (status === 'COMPLETED') {
       record.completedAt = new Date().toISOString();
     }
@@ -78,7 +91,6 @@ export class PrismaSubmissionRepository implements SubmissionRepository {
       record.failureReason = failureReason;
     }
     this.db.flush();
-    const { contentHash, ...sub } = record;
-    return sub;
+    return this.toDomain(record);
   }
 }

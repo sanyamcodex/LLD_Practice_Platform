@@ -4,6 +4,7 @@ import { SubmissionService } from '../../application/SubmissionService';
 import { SubmissionRepository } from '../../domain/ports/SubmissionRepository';
 import { EvaluationRepository } from '../../domain/ports/EvaluationRepository';
 import { ProblemRepository } from '../../domain/ports/ProblemRepository';
+import { Evaluation } from '../../domain/entities/Evaluation';
 
 export function createHistoryRouter(
   attemptService: AttemptService,
@@ -26,7 +27,7 @@ export function createHistoryRouter(
         attempts.map(async (attempt) => {
           const submissions = await submissionRepo.findByAttemptId(attempt.id);
           const latestSubmission = submissions[0] || null;
-          let evaluations = [];
+          let evaluations: Evaluation[] = [];
           let feedback = null;
           let finalSubmission = latestSubmission;
 
@@ -69,7 +70,7 @@ export function createHistoryRouter(
         attempts.map(async (attempt) => {
           const submissions = await submissionRepo.findByAttemptId(attempt.id);
           const latestSubmission = submissions[0] || null;
-          let evaluations = [];
+          let evaluations: Evaluation[] = [];
           let feedback = null;
           let finalSubmission = latestSubmission;
 

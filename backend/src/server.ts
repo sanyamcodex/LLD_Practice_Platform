@@ -9,32 +9,64 @@ process.on('unhandledRejection', (reason) => {
 
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
-import path from 'path';
-import { config } from './backend/src/config/env';
-import { errorHandler } from './backend/src/api/middleware/errorHandler';
-import { PrismaProblemRepository } from './backend/src/infrastructure/repositories/PrismaProblemRepository';
-import { PrismaAttemptRepository } from './backend/src/infrastructure/repositories/PrismaAttemptRepository';
-import { PrismaSubmissionRepository } from './backend/src/infrastructure/repositories/PrismaSubmissionRepository';
-import { PrismaEvaluationRepository } from './backend/src/infrastructure/repositories/PrismaEvaluationRepository';
-import { checkDatabaseConnection } from './backend/src/infrastructure/prisma/client';
-import { seedProblems } from './backend/src/infrastructure/seed/seedProblems';
-import { DeterministicEvaluator } from './backend/src/domain/evaluation/DeterministicEvaluator';
-import { AIRubricEvaluator } from './backend/src/domain/evaluation/AIRubricEvaluator';
-import { StubAIEvaluator } from './backend/src/domain/evaluation/StubAIEvaluator';
-import { GeminiClient } from './backend/src/infrastructure/llm/GeminiClient';
-import { EvaluationOrchestrator } from './backend/src/domain/evaluation/EvaluationOrchestrator';
-import { EvaluationQueue } from './backend/src/application/EvaluationQueue';
-import { ProblemService } from './backend/src/application/ProblemService';
-import { AttemptService } from './backend/src/application/AttemptService';
-import { SubmissionService } from './backend/src/application/SubmissionService';
-import { createProblemsRouter } from './backend/src/api/routes/problems.routes';
-import { createAttemptsRouter } from './backend/src/api/routes/attempts.routes';
-import { createSubmissionsRouter } from './backend/src/api/routes/submissions.routes';
-import { createHistoryRouter } from './backend/src/api/routes/history.routes';
+import { config } from './config/env';
+import { errorHandler } from './api/middleware/errorHandler';
+import { PrismaProblemRepository } from './infrastructure/repositories/PrismaProblemRepository';
+import { PrismaAttemptRepository } from './infrastructure/repositories/PrismaAttemptRepository';
+import { PrismaSubmissionRepository } from './infrastructure/repositories/PrismaSubmissionRepository';
+import { PrismaEvaluationRepository } from './infrastructure/repositories/PrismaEvaluationRepository';
+import { checkDatabaseConnection } from './infrastructure/prisma/client';
+import { seedProblems } from './infrastructure/seed/seedProblems';
+import { DeterministicEvaluator } from './domain/evaluation/DeterministicEvaluator';
+import { AIRubricEvaluator } from './domain/evaluation/AIRubricEvaluator';
+import { StubAIEvaluator } from './domain/evaluation/StubAIEvaluator';
+import { GeminiClient } from './infrastructure/llm/GeminiClient';
+import { EvaluationOrchestrator } from './domain/evaluation/EvaluationOrchestrator';
+import { EvaluationQueue } from './application/EvaluationQueue';
+import { ProblemService } from './application/ProblemService';
+import { AttemptService } from './application/AttemptService';
+import { SubmissionService } from './application/SubmissionService';
+import { createProblemsRouter } from './api/routes/problems.routes';
+import { createAttemptsRouter } from './api/routes/attempts.routes';
+import { createSubmissionsRouter } from './api/routes/submissions.routes';
+import { createHistoryRouter } from './api/routes/history.routes';
 
 export async function createBackendApp(options?: { useStubAI?: boolean }): Promise<Express> {
   const app = express();
-  app.use(cors());
+
+  // CORS configuration to allow Vercel frontend, custom ALLOWED_ORIGIN, and localhost dev
+  const allowedOriginEnv = process.env.ALLOWED_ORIGIN || config.allowedOrigin;
+  const configuredOrigins = allowedOriginEnv
+    ? allowedOriginEnv.split(',').map((o) => o.trim())
+    : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:4173'];
+
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        // Allow requests with no origin (curl, server-to-server, health checks)
+        if (!origin) return callback(null, true);
+
+        // Allow wildcard or exact match in configured origins
+        if (
+          allowedOriginEnv === '*' ||
+          configuredOrigins.includes(origin) ||
+          origin.endsWith('.vercel.app') ||
+          origin.startsWith('http://localhost:') ||
+          origin.startsWith('http://127.0.0.1:')
+        ) {
+          return callback(null, true);
+        }
+
+        // Fallback: log and allow during preview / dev to prevent broken UI
+        console.warn(`[CORS] Request from unexpected origin: ${origin}. Allowing for compatibility.`);
+        callback(null, true);
+      },
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    })
+  );
+
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
@@ -65,7 +97,7 @@ export async function createBackendApp(options?: { useStubAI?: boolean }): Promi
   // Evaluators & Orchestrator
   const deterministicEvaluator = new DeterministicEvaluator();
   const geminiClient = new GeminiClient();
-  
+
   // Real AIRubricEvaluator is used in live runtime with GeminiClient (with multi-model fallback & backoff retries).
   // StubAIEvaluator is strictly gated behind options?.useStubAI for hermetic automated testing.
   const aiEvaluator = options?.useStubAI
@@ -92,12 +124,12 @@ export async function createBackendApp(options?: { useStubAI?: boolean }): Promi
     evaluationQueue
   );
 
-  // Health-check endpoint per Phase 0
+  // Health-check endpoint for Render / load balancers
   app.get('/api/health', (_req: Request, res: Response) => {
     res.status(200).json({ status: 'ok' });
   });
 
-  // API Routes per GoogleAI.md §5
+  // API Routes
   app.use('/api/problems', createProblemsRouter(problemService));
   app.use('/api/attempts', createAttemptsRouter(attemptService, submissionService));
   app.use('/api/submissions', createSubmissionsRouter(submissionService));
@@ -111,32 +143,14 @@ export async function createBackendApp(options?: { useStubAI?: boolean }): Promi
 
 export async function startServer(): Promise<void> {
   const app = await createBackendApp();
-  const PORT = process.env.NODE_ENV === 'production' && process.env.PORT && process.env.PORT !== '8080'
+  // On Render, process.env.PORT is assigned dynamically (e.g. 10000). Filter out 8080 for sandbox dev containers.
+  const PORT = process.env.PORT && process.env.PORT !== '8080'
     ? parseInt(process.env.PORT, 10)
-    : 3000;
-
-  // Mount Vite middleware for dev or serve static files in production
-  if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: {
-        middlewareMode: true,
-        hmr: false,
-      },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
+    : (config.port || 3000);
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on port ${PORT}`);
-    console.log(`[LLD Practice Platform] Server running on http://0.0.0.0:${PORT}`);
+    console.log(`[LLD Practice Platform Backend] Running on http://0.0.0.0:${PORT}`);
   });
 }
 
@@ -144,7 +158,7 @@ export async function startServer(): Promise<void> {
 const isTestEnvironment = Boolean(process.env.VITEST || process.env.NODE_ENV === 'test');
 if (!isTestEnvironment) {
   startServer().catch((err) => {
-    console.error('Fatal failure starting server:', err);
+    console.error('Fatal failure starting backend server:', err);
     process.exit(1);
   });
 }
