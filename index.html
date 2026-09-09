@@ -9,6 +9,14 @@
     <meta property="og:description" content="Low-Level Design practice platform with deterministic and AI-powered evaluation against structured rubrics, state-machine tracked submissions, and iterative learning loops." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // Suppress benign reverse-proxy websocket disconnect events in sandboxed dev container
+      window.addEventListener('unhandledrejection', function (event) {
+        if (event.reason && (String(event.reason).includes('WebSocket') || event.reason?.message?.includes('WebSocket'))) {
+          event.preventDefault();
+        }
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>

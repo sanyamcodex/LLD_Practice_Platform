@@ -467,6 +467,34 @@
       },
       "createdAt": "2026-09-08T22:06:19.578Z",
       "updatedAt": "2026-09-08T22:06:19.596Z"
+    },
+    "att_1788943445816_irwgi": {
+      "id": "att_1788943445816_irwgi",
+      "problemId": "prob-parking-lot",
+      "learnerId": "learner_integration_test",
+      "status": "SUBMITTED",
+      "content": {
+        "assumptions": "4 floors with 100 spots per floor. Concurrency handled via row-level locks.",
+        "classesAndResponsibilities": "ParkingLot, ParkingFloor, ParkingSpot, Ticket, PaymentService.",
+        "relationships": "ParkingLot has-a ParkingFloor. ParkingFloor has-a ParkingSpot.",
+        "extensibilityAnswer": "Strategy pattern for VIP dynamic pricing without altering core entities."
+      },
+      "createdAt": "2026-09-09T08:44:05.816Z",
+      "updatedAt": "2026-09-09T08:44:05.829Z"
+    },
+    "att_1788943445856_i4f32": {
+      "id": "att_1788943445856_i4f32",
+      "problemId": "prob-vending-machine",
+      "learnerId": "learner_idempotency_test",
+      "status": "SUBMITTED",
+      "content": {
+        "assumptions": "Machine has 5 aisles and takes coins and cards.",
+        "classesAndResponsibilities": "VendingMachine, Inventory, State, CoinAcceptor.",
+        "relationships": "VendingMachine has-a State. State has concrete states.",
+        "extensibilityAnswer": "State pattern allows adding contactless NFC payment without rewiring existing states."
+      },
+      "createdAt": "2026-09-09T08:44:05.856Z",
+      "updatedAt": "2026-09-09T08:44:05.868Z"
     }
   },
   "submissions": {
@@ -870,6 +898,34 @@
       "createdAt": "2026-09-08T22:06:19.594Z",
       "contentHash": "6c5acef47b683a77ea08b40f1a8049face4960a1b5a843bd1b5afdd7ec677e9b",
       "completedAt": "2026-09-08T22:06:19.604Z"
+    },
+    "sub_1788943445827_6oqsh": {
+      "id": "sub_1788943445827_6oqsh",
+      "attemptId": "att_1788943445816_irwgi",
+      "contentSnapshot": {
+        "assumptions": "4 floors with 100 spots per floor. Concurrency handled via row-level locks.",
+        "classesAndResponsibilities": "ParkingLot, ParkingFloor, ParkingSpot, Ticket, PaymentService.",
+        "relationships": "ParkingLot has-a ParkingFloor. ParkingFloor has-a ParkingSpot.",
+        "extensibilityAnswer": "Strategy pattern for VIP dynamic pricing without altering core entities."
+      },
+      "status": "COMPLETED",
+      "createdAt": "2026-09-09T08:44:05.827Z",
+      "contentHash": "cae2e114df2622b8af723b6e097338e52e80e3ef631d61bb67474fa362fc3f56",
+      "completedAt": "2026-09-09T08:44:05.839Z"
+    },
+    "sub_1788943445866_78h1y": {
+      "id": "sub_1788943445866_78h1y",
+      "attemptId": "att_1788943445856_i4f32",
+      "contentSnapshot": {
+        "assumptions": "Machine has 5 aisles and takes coins and cards.",
+        "classesAndResponsibilities": "VendingMachine, Inventory, State, CoinAcceptor.",
+        "relationships": "VendingMachine has-a State. State has concrete states.",
+        "extensibilityAnswer": "State pattern allows adding contactless NFC payment without rewiring existing states."
+      },
+      "status": "COMPLETED",
+      "createdAt": "2026-09-09T08:44:05.866Z",
+      "contentHash": "6c5acef47b683a77ea08b40f1a8049face4960a1b5a843bd1b5afdd7ec677e9b",
+      "completedAt": "2026-09-09T08:44:05.876Z"
     }
   },
   "evaluations": {
@@ -4478,6 +4534,288 @@
       ],
       "overallSummary": "Solid object-oriented design for Design a State-Driven Vending Machine. Demonstrates clear domain separation and graceful extensibility with minor coupling opportunities in manager classes.",
       "createdAt": "2026-09-08T22:06:19.602Z",
+      "metadata": {
+        "evaluator": "StubAIEvaluator"
+      }
+    },
+    "eval_det_1788943445835_no3oj": {
+      "id": "eval_det_1788943445835_no3oj",
+      "submissionId": "sub_1788943445827_6oqsh",
+      "evaluatorType": "DETERMINISTIC",
+      "rubricResults": [
+        {
+          "criterionKey": "requirement_understanding",
+          "score": 4,
+          "evidence": "Provided assumptions (75 chars): \"4 floors with 100 spots per floor. Concurrency handled via row-level locks....\"",
+          "concern": "",
+          "suggestion": "Maintain stated assumptions when specifying class contracts.",
+          "confidence": 0.9
+        },
+        {
+          "criterionKey": "class_responsibilities",
+          "score": 4,
+          "evidence": "Identified 5 distinct candidate classes: [ParkingLot, ParkingFloor, ParkingSpot, Ticket, PaymentService]. Content length: 62 characters.",
+          "concern": "",
+          "suggestion": "Ensure responsibility assignments do not couple business logic with data storage.",
+          "confidence": 0.85
+        },
+        {
+          "criterionKey": "coupling_cohesion",
+          "score": 3,
+          "evidence": "Relationships section (62 chars). Detected relationship semantics: [has-a].",
+          "concern": "",
+          "suggestion": "Favor composition over inheritance to decouple runtime behavior from compile-time hierarchies.",
+          "confidence": 0.8
+        },
+        {
+          "criterionKey": "encapsulation_interfaces",
+          "score": 2,
+          "evidence": "No explicit interface or contract abstractions found in class list.",
+          "concern": "Concrete classes directly referenced without abstraction barriers.",
+          "suggestion": "Program to interfaces (e.g., IParkingStrategy, PaymentProcessor) to isolate implementations.",
+          "confidence": 0.8
+        },
+        {
+          "criterionKey": "abstraction_pattern_use",
+          "score": 4,
+          "evidence": "Detected design pattern keywords: [strategy].",
+          "concern": "",
+          "suggestion": "Verify that selected patterns genuinely solve requirement flexibility rather than adding accidental complexity.",
+          "confidence": 0.8
+        },
+        {
+          "criterionKey": "extensibility",
+          "score": 4,
+          "evidence": "Extensibility analysis (72 chars): \"Strategy pattern for VIP dynamic pricing without altering core entities....\"",
+          "concern": "",
+          "suggestion": "Specify concrete interface additions or Strategy patterns that absorb the change.",
+          "confidence": 0.9
+        },
+        {
+          "criterionKey": "explanation_quality",
+          "score": 3,
+          "evidence": "Total structured design artifact: 271 characters across all 4 mandatory sections.",
+          "concern": "Concise to the point of omitting trade-offs and structural rationale.",
+          "suggestion": "Articulate why particular trade-offs were chosen (e.g. why enum vs strategy, why in-memory lock vs queue).",
+          "confidence": 0.85
+        }
+      ],
+      "overallSummary": "Deterministic Structural Audit complete (3.4/5.0 avg). Verified 4 sections, 5 candidate classes, and extensibility coverage.",
+      "createdAt": "2026-09-09T08:44:05.835Z",
+      "metadata": {
+        "uniqueClassesCount": 5,
+        "matchedRelKeywords": [
+          "has-a"
+        ],
+        "hasExtensibilityAnswer": true,
+        "totalLength": 271
+      }
+    },
+    "eval_stub_1788943445837": {
+      "id": "eval_stub_1788943445837",
+      "submissionId": "sub_1788943445827_6oqsh",
+      "evaluatorType": "AI",
+      "rubricResults": [
+        {
+          "criterionKey": "requirement_understanding",
+          "score": 4,
+          "evidence": "Learner explicitly defined: \"4 floors with 100 spots per floor. Concurrency handled via row-level locks....\"",
+          "concern": "Did not explicitly scope high-concurrency peak load characteristics.",
+          "suggestion": "Add peak throughput estimation to quantify read/write ratios.",
+          "confidence": 0.9
+        },
+        {
+          "criterionKey": "class_responsibilities",
+          "score": 4,
+          "evidence": "Extracted candidate classes from design: \"ParkingLot, ParkingFloor, ParkingSpot, Ticket, PaymentService....\"",
+          "concern": "Potential coupling if the manager class handles both persistence and pricing.",
+          "suggestion": "Separate pricing logic into a distinct Strategy class.",
+          "confidence": 0.88
+        },
+        {
+          "criterionKey": "coupling_cohesion",
+          "score": 4,
+          "evidence": "Relationships specified: \"ParkingLot has-a ParkingFloor. ParkingFloor has-a ParkingSpot....\"",
+          "concern": "Direct dependency between coordinator and terminal entities.",
+          "suggestion": "Use an event listener or observer for state updates.",
+          "confidence": 0.85
+        },
+        {
+          "criterionKey": "encapsulation_interfaces",
+          "score": 3,
+          "evidence": "Interface declarations provided for primary domain interactions.",
+          "concern": "Internal collections are exposed rather than unmodifiable views.",
+          "suggestion": "Wrap entity lookups in immutable accessors to preserve encapsulation.",
+          "confidence": 0.85
+        },
+        {
+          "criterionKey": "abstraction_pattern_use",
+          "score": 4,
+          "evidence": "Applied Strategy pattern for dynamic algorithm selection.",
+          "concern": "No factory abstraction to shield client from instantiation details.",
+          "suggestion": "Introduce a Factory Method for polymorphic entity creation.",
+          "confidence": 0.92
+        },
+        {
+          "criterionKey": "extensibility",
+          "score": 4,
+          "evidence": "Addressed future requirement: \"Strategy pattern for VIP dynamic pricing without altering core entities....\"",
+          "concern": "New payment or hardware device would require class modification if not wrapped in adapter.",
+          "suggestion": "Implement Adapter pattern for third-party hardware or payment gateways.",
+          "confidence": 0.89
+        },
+        {
+          "criterionKey": "explanation_quality",
+          "score": 4,
+          "evidence": "Comprehensive design sections covering structure, relationships, and trade-offs.",
+          "concern": "Lacks explicit latency vs storage footprint discussion.",
+          "suggestion": "Document memory trade-offs when caching active sessions.",
+          "confidence": 0.87
+        }
+      ],
+      "overallSummary": "Solid object-oriented design for Design a Multi-Floor Parking Lot. Demonstrates clear domain separation and graceful extensibility with minor coupling opportunities in manager classes.",
+      "createdAt": "2026-09-09T08:44:05.837Z",
+      "metadata": {
+        "evaluator": "StubAIEvaluator"
+      }
+    },
+    "eval_det_1788943445872_r1t1q": {
+      "id": "eval_det_1788943445872_r1t1q",
+      "submissionId": "sub_1788943445866_78h1y",
+      "evaluatorType": "DETERMINISTIC",
+      "rubricResults": [
+        {
+          "criterionKey": "requirement_understanding",
+          "score": 4,
+          "evidence": "Provided assumptions (47 chars): \"Machine has 5 aisles and takes coins and cards....\"",
+          "concern": "",
+          "suggestion": "Maintain stated assumptions when specifying class contracts.",
+          "confidence": 0.9
+        },
+        {
+          "criterionKey": "class_responsibilities",
+          "score": 4,
+          "evidence": "Identified 4 distinct candidate classes: [VendingMachine, Inventory, State, CoinAcceptor]. Content length: 47 characters.",
+          "concern": "",
+          "suggestion": "Ensure responsibility assignments do not couple business logic with data storage.",
+          "confidence": 0.85
+        },
+        {
+          "criterionKey": "coupling_cohesion",
+          "score": 3,
+          "evidence": "Relationships section (54 chars). Detected relationship semantics: [has-a].",
+          "concern": "",
+          "suggestion": "Favor composition over inheritance to decouple runtime behavior from compile-time hierarchies.",
+          "confidence": 0.8
+        },
+        {
+          "criterionKey": "encapsulation_interfaces",
+          "score": 2,
+          "evidence": "No explicit interface or contract abstractions found in class list.",
+          "concern": "Concrete classes directly referenced without abstraction barriers.",
+          "suggestion": "Program to interfaces (e.g., IParkingStrategy, PaymentProcessor) to isolate implementations.",
+          "confidence": 0.8
+        },
+        {
+          "criterionKey": "abstraction_pattern_use",
+          "score": 4,
+          "evidence": "Detected design pattern keywords: [state].",
+          "concern": "",
+          "suggestion": "Verify that selected patterns genuinely solve requirement flexibility rather than adding accidental complexity.",
+          "confidence": 0.8
+        },
+        {
+          "criterionKey": "extensibility",
+          "score": 4,
+          "evidence": "Extensibility analysis (85 chars): \"State pattern allows adding contactless NFC payment without rewiring existing states....\"",
+          "concern": "",
+          "suggestion": "Specify concrete interface additions or Strategy patterns that absorb the change.",
+          "confidence": 0.9
+        },
+        {
+          "criterionKey": "explanation_quality",
+          "score": 2,
+          "evidence": "Total structured design artifact: 233 characters across all 4 mandatory sections.",
+          "concern": "Concise to the point of omitting trade-offs and structural rationale.",
+          "suggestion": "Articulate why particular trade-offs were chosen (e.g. why enum vs strategy, why in-memory lock vs queue).",
+          "confidence": 0.85
+        }
+      ],
+      "overallSummary": "Deterministic Structural Audit complete (3.3/5.0 avg). Verified 4 sections, 4 candidate classes, and extensibility coverage.",
+      "createdAt": "2026-09-09T08:44:05.872Z",
+      "metadata": {
+        "uniqueClassesCount": 4,
+        "matchedRelKeywords": [
+          "has-a"
+        ],
+        "hasExtensibilityAnswer": true,
+        "totalLength": 233
+      }
+    },
+    "eval_stub_1788943445874": {
+      "id": "eval_stub_1788943445874",
+      "submissionId": "sub_1788943445866_78h1y",
+      "evaluatorType": "AI",
+      "rubricResults": [
+        {
+          "criterionKey": "requirement_understanding",
+          "score": 4,
+          "evidence": "Learner explicitly defined: \"Machine has 5 aisles and takes coins and cards....\"",
+          "concern": "Did not explicitly scope high-concurrency peak load characteristics.",
+          "suggestion": "Add peak throughput estimation to quantify read/write ratios.",
+          "confidence": 0.9
+        },
+        {
+          "criterionKey": "class_responsibilities",
+          "score": 4,
+          "evidence": "Extracted candidate classes from design: \"VendingMachine, Inventory, State, CoinAcceptor....\"",
+          "concern": "Potential coupling if the manager class handles both persistence and pricing.",
+          "suggestion": "Separate pricing logic into a distinct Strategy class.",
+          "confidence": 0.88
+        },
+        {
+          "criterionKey": "coupling_cohesion",
+          "score": 4,
+          "evidence": "Relationships specified: \"VendingMachine has-a State. State has concrete states....\"",
+          "concern": "Direct dependency between coordinator and terminal entities.",
+          "suggestion": "Use an event listener or observer for state updates.",
+          "confidence": 0.85
+        },
+        {
+          "criterionKey": "encapsulation_interfaces",
+          "score": 3,
+          "evidence": "Interface declarations provided for primary domain interactions.",
+          "concern": "Internal collections are exposed rather than unmodifiable views.",
+          "suggestion": "Wrap entity lookups in immutable accessors to preserve encapsulation.",
+          "confidence": 0.85
+        },
+        {
+          "criterionKey": "abstraction_pattern_use",
+          "score": 4,
+          "evidence": "Applied Strategy pattern for dynamic algorithm selection.",
+          "concern": "No factory abstraction to shield client from instantiation details.",
+          "suggestion": "Introduce a Factory Method for polymorphic entity creation.",
+          "confidence": 0.92
+        },
+        {
+          "criterionKey": "extensibility",
+          "score": 4,
+          "evidence": "Addressed future requirement: \"State pattern allows adding contactless NFC payment without rewiring existing states....\"",
+          "concern": "New payment or hardware device would require class modification if not wrapped in adapter.",
+          "suggestion": "Implement Adapter pattern for third-party hardware or payment gateways.",
+          "confidence": 0.89
+        },
+        {
+          "criterionKey": "explanation_quality",
+          "score": 4,
+          "evidence": "Comprehensive design sections covering structure, relationships, and trade-offs.",
+          "concern": "Lacks explicit latency vs storage footprint discussion.",
+          "suggestion": "Document memory trade-offs when caching active sessions.",
+          "confidence": 0.87
+        }
+      ],
+      "overallSummary": "Solid object-oriented design for Design a State-Driven Vending Machine. Demonstrates clear domain separation and graceful extensibility with minor coupling opportunities in manager classes.",
+      "createdAt": "2026-09-09T08:44:05.874Z",
       "metadata": {
         "evaluator": "StubAIEvaluator"
       }
