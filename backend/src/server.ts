@@ -77,7 +77,7 @@ export async function createBackendApp(options?: { useStubAI?: boolean }): Promi
   let evaluationRepo: PrismaEvaluationRepository;
 
   try {
-    console.log('[Startup] Initializing database and repositories...');
+    console.log('[Startup] Initializing database...');
     if (process.env.DATABASE_URL && !options?.useStubAI) {
       await checkDatabaseConnection();
     }
@@ -87,10 +87,11 @@ export async function createBackendApp(options?: { useStubAI?: boolean }): Promi
     evaluationRepo = new PrismaEvaluationRepository();
 
     // Seed problems at startup
+    console.log('[Startup] Seeding...');
     await seedProblems(problemRepo);
     console.log('[Startup] Database and problem repositories ready.');
   } catch (dbErr) {
-    console.error('FATAL DATABASE / PRISMA INITIALIZATION ERROR:', dbErr);
+    console.error('[Startup] FATAL DATABASE / PRISMA INITIALIZATION ERROR:', dbErr);
     throw dbErr;
   }
 
@@ -142,12 +143,13 @@ export async function createBackendApp(options?: { useStubAI?: boolean }): Promi
 }
 
 export async function startServer(): Promise<void> {
-  const app = await createBackendApp();
-  // On Render, process.env.PORT is assigned dynamically (e.g. 10000). Filter out 8080 for sandbox dev containers.
-  const PORT = process.env.PORT && process.env.PORT !== '8080'
-    ? parseInt(process.env.PORT, 10)
-    : (config.port || 3000);
+  console.log('[Startup] Starting server');
+  const PORT = Number(process.env.PORT) || 3000;
+  console.log(`[Startup] PORT=${PORT}`);
 
+  const app = await createBackendApp();
+
+  console.log('[Startup] Starting HTTP server...');
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on port ${PORT}`);
     console.log(`[LLD Practice Platform Backend] Running on http://0.0.0.0:${PORT}`);
@@ -158,7 +160,7 @@ export async function startServer(): Promise<void> {
 const isTestEnvironment = Boolean(process.env.VITEST || process.env.NODE_ENV === 'test');
 if (!isTestEnvironment) {
   startServer().catch((err) => {
-    console.error('Fatal failure starting backend server:', err);
+    console.error('[Startup] Fatal failure starting backend server:', err);
     process.exit(1);
   });
 }

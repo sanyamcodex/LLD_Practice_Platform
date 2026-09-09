@@ -15,3 +15,5 @@ services:
         sync: false
       - key: ALLOWED_ORIGIN
         sync: false
+      - key: APP_URL
+        sync: false

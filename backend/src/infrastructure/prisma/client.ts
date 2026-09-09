@@ -16,11 +16,19 @@ export function getPrismaClient(): PrismaClient {
   return prismaClient;
 }
 
-export async function checkDatabaseConnection(): Promise<void> {
+export async function checkDatabaseConnection(timeoutMs: number = 10000): Promise<void> {
   try {
     console.log('[Database] Checking database connection via PrismaClient...');
     const client = getPrismaClient();
-    await client.$connect();
+    let timer: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Database connection timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+
+    await Promise.race([client.$connect(), timeoutPromise]);
+    if (timer) clearTimeout(timer);
     console.log('[Database] Database connection established successfully.');
   } catch (err) {
     console.error('FATAL DATABASE CONNECTION / HEALTH-CHECK ERROR:', err);

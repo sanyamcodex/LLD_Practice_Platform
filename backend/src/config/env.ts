@@ -11,9 +11,7 @@ export interface AppConfig {
 }
 
 export const config: AppConfig = {
-  port: process.env.NODE_ENV === 'production' && process.env.PORT && process.env.PORT !== '8080'
-    ? parseInt(process.env.PORT, 10)
-    : 3000,
+  port: Number(process.env.PORT) || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
   databaseUrl: process.env.DATABASE_URL || 'file:./dev.db',
   geminiApiKey: process.env.GEMINI_API_KEY || '',
