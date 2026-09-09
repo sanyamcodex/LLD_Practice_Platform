@@ -21,24 +21,46 @@ export class AIRubricEvaluator implements EvaluationStrategy {
     private readonly timeoutMs: number = 18000
   ) {}
 
-  async evaluate(submission: Submission, problem: Problem, rubric: Rubric): Promise<Evaluation> {
-    // Run with timeout promise
-    let timer: NodeJS.Timeout | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`AI Evaluation timed out after ${this.timeoutMs}ms`)), this.timeoutMs);
-    });
+  async evaluate(submission: Submission, problem: Problem, rubric: Rubric, parentSignal?: AbortSignal): Promise<Evaluation> {
+    const internalController = new AbortController();
 
-    const evalPromise = this.llmClient.evaluateDesign({
-      submission,
-      problem,
-      rubric,
-    });
+    const onParentAbort = () => {
+      internalController.abort(parentSignal?.reason || new Error('Orchestrator cancelled evaluation'));
+    };
+
+    if (parentSignal) {
+      if (parentSignal.aborted) {
+        internalController.abort(parentSignal.reason || new Error('Orchestrator cancelled evaluation'));
+      } else {
+        parentSignal.addEventListener('abort', onParentAbort, { once: true });
+      }
+    }
+
+    let timer: NodeJS.Timeout | undefined;
+    let timedOut = false;
+    timer = setTimeout(() => {
+      timedOut = true;
+      internalController.abort(new Error(`AI Evaluation timed out after ${this.timeoutMs}ms`));
+    }, this.timeoutMs);
 
     let response: any;
     try {
-      response = await Promise.race([evalPromise, timeoutPromise]);
+      response = await this.llmClient.evaluateDesign({
+        submission,
+        problem,
+        rubric,
+        signal: internalController.signal,
+      });
+    } catch (err: any) {
+      if (timedOut || (internalController.signal.aborted && !parentSignal?.aborted)) {
+        throw new Error(`AI Evaluation timed out after ${this.timeoutMs}ms`);
+      }
+      throw err;
     } finally {
       if (timer) clearTimeout(timer);
+      if (parentSignal) {
+        parentSignal.removeEventListener('abort', onParentAbort);
+      }
     }
 
     // Ensure all 7 rubric criteria have representation

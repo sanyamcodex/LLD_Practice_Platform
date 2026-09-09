@@ -262,4 +262,114 @@ describe('EvaluationOrchestrator: Reliability, Fallback & Duplicate Protection',
     expect(result2.aiEvaluation?.overallSummary).toBe('Retry successful.');
     expect(evaluateAiFn).toHaveBeenCalledTimes(2);
   });
+
+  it('Scenario 11: Late Gemini response cannot overwrite deterministic result or write to repository after fallback', async () => {
+    const { mockEvaluationRepo, mockSubmissionRepo, savedEvaluations, submissionStatusMap } = createMockRepos();
+    const deterministicEvaluator = new DeterministicEvaluator();
+
+    let capturedSignal: AbortSignal | undefined;
+    let lateResolveFn: (val: any) => void;
+
+    const slowAiEvaluator: EvaluationStrategy = {
+      type: 'AI',
+      evaluate: vi.fn().mockImplementation((_sub, _prob, _rubric, signal) => {
+        capturedSignal = signal;
+        return new Promise((resolve, reject) => {
+          lateResolveFn = resolve;
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              reject(signal.reason || new Error('Aborted'));
+            });
+          }
+        });
+      }),
+    };
+
+    const orchestrator = new EvaluationOrchestrator(
+      deterministicEvaluator,
+      slowAiEvaluator,
+      mockEvaluationRepo,
+      mockSubmissionRepo
+    );
+
+    // Simulate timeout by rejecting after 20ms
+    const evalPromise = orchestrator.evaluateSubmission(
+      mockSubmission,
+      mockProblem,
+      STANDARD_LLD_RUBRIC
+    );
+
+    // AI is taking too long -> trigger abort/timeout
+    await new Promise((r) => setTimeout(r, 10));
+    capturedSignal?.dispatchEvent(new Event('abort'));
+
+    const result = await evalPromise;
+    expect(result.status).toBe('COMPLETED');
+    expect(result.aiAvailable).toBe(false);
+    expect(submissionStatusMap[mockSubmission.id]).toBe('COMPLETED');
+
+    const evalsCountBeforeLateResponse = savedEvaluations.length;
+
+    // Now simulate late response attempting to resolve after fallback finalized
+    if (lateResolveFn!) {
+      lateResolveFn({
+        id: 'eval_ai_late_rogue',
+        submissionId: mockSubmission.id,
+        evaluatorType: 'AI',
+        rubricResults: [],
+        overallSummary: 'Late rogue response that should be discarded.',
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    // Verify late response did NOT add or overwrite any evaluation in the repository
+    expect(savedEvaluations.length).toBe(evalsCountBeforeLateResponse);
+    expect(savedEvaluations.some((e) => e.id === 'eval_ai_late_rogue')).toBe(false);
+  });
+
+  it('Scenario 12: Deterministic fallback completes once with no duplicate evaluation records', async () => {
+    const { mockEvaluationRepo, mockSubmissionRepo, savedEvaluations } = createMockRepos();
+    const deterministicEvaluator = new DeterministicEvaluator();
+
+    const failingAI: EvaluationStrategy = {
+      type: 'AI',
+      evaluate: vi.fn().mockRejectedValue(new Error('503 Service Unavailable')),
+    };
+
+    const orchestrator = new EvaluationOrchestrator(
+      deterministicEvaluator,
+      failingAI,
+      mockEvaluationRepo,
+      mockSubmissionRepo
+    );
+
+    const result = await orchestrator.evaluateSubmission(
+      mockSubmission,
+      mockProblem,
+      STANDARD_LLD_RUBRIC
+    );
+
+    expect(result.status).toBe('COMPLETED');
+    expect(result.aiAvailable).toBe(false);
+
+    // Verify evaluations count: exactly 1 DETERMINISTIC, exactly 1 AI fallback
+    const detEvals = savedEvaluations.filter((e) => e.evaluatorType === 'DETERMINISTIC');
+    const aiEvals = savedEvaluations.filter((e) => e.evaluatorType === 'AI');
+
+    expect(detEvals.length).toBe(1);
+    expect(aiEvals.length).toBe(1);
+    expect(aiEvals[0].metadata?.fallback).toBe(true);
+
+    // Run again on completed submission
+    const result2 = await orchestrator.evaluateSubmission(
+      mockSubmission,
+      mockProblem,
+      STANDARD_LLD_RUBRIC
+    );
+
+    expect(result2.status).toBe('COMPLETED');
+    // Ensure no duplicate records were appended
+    expect(savedEvaluations.filter((e) => e.evaluatorType === 'DETERMINISTIC').length).toBe(1);
+    expect(savedEvaluations.filter((e) => e.evaluatorType === 'AI').length).toBe(1);
+  });
 });

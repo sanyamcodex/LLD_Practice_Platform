@@ -305,4 +305,88 @@ describe('GeminiClient: Model Strategy & Reliability (gemini-3.5-flash-lite -> g
     // Exactly 1 call to primary (no retry for malformed JSON) + 1 call to fallback = 2 calls
     expect(generateContent).toHaveBeenCalledTimes(2);
   });
+
+  it('Gemini request times out and is actually aborted via AbortSignal', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    let wasAborted = false;
+
+    const generateContent = vi.fn().mockImplementation(async (params: any) => {
+      capturedSignal = params?.config?.abortSignal;
+      if (capturedSignal) {
+        capturedSignal.addEventListener('abort', () => {
+          wasAborted = true;
+        });
+      }
+      // Simulate a request taking longer than the 50ms timeout
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return { text: JSON.stringify(validJsonResponse) };
+    });
+
+    const client = new GeminiClient({
+      primaryModel: 'gemini-3.5-flash-lite',
+      fallbackModel: 'gemini-3.6-flash',
+      primaryTimeoutMs: 50,
+      primaryMaxAttempts: 1,
+      fallbackTimeoutMs: 50,
+      fallbackMaxAttempts: 1,
+      baseBackoffMs: 10,
+      aiClient: {
+        models: { generateContent },
+      },
+    });
+
+    await expect(
+      client.evaluateDesign({
+        problem: mockProblem,
+        submission: mockSubmission,
+        rubric: STANDARD_LLD_RUBRIC,
+      })
+    ).rejects.toThrow();
+
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(wasAborted).toBe(true);
+  });
+
+  it('fallback request does not continue after orchestrator cancellation', async () => {
+    const parentController = new AbortController();
+    const generateContent = vi.fn().mockImplementation(async (params: any) => {
+      // Primary model started, caller cancels via parent controller
+      if (params.model === 'gemini-3.5-flash-lite') {
+        parentController.abort(new Error('Orchestrator timeout: switched to FR14 fallback'));
+        const abortErr = new Error('Aborted');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
+      return { text: JSON.stringify(validJsonResponse) };
+    });
+
+    const client = new GeminiClient({
+      primaryModel: 'gemini-3.5-flash-lite',
+      fallbackModel: 'gemini-3.6-flash',
+      primaryTimeoutMs: 500,
+      primaryMaxAttempts: 2,
+      fallbackTimeoutMs: 500,
+      fallbackMaxAttempts: 1,
+      baseBackoffMs: 10,
+      aiClient: {
+        models: { generateContent },
+      },
+    });
+
+    await expect(
+      client.evaluateDesign({
+        problem: mockProblem,
+        submission: mockSubmission,
+        rubric: STANDARD_LLD_RUBRIC,
+        signal: parentController.signal,
+      })
+    ).rejects.toThrow('Orchestrator timeout: switched to FR14 fallback');
+
+    // Fallback model was NEVER invoked because parent signal was aborted
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(generateContent).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gemini-3.5-flash-lite' })
+    );
+  });
 });

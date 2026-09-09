@@ -31,6 +31,7 @@ import { createProblemsRouter } from './backend/src/api/routes/problems.routes';
 import { createAttemptsRouter } from './backend/src/api/routes/attempts.routes';
 import { createSubmissionsRouter } from './backend/src/api/routes/submissions.routes';
 import { createHistoryRouter } from './backend/src/api/routes/history.routes';
+import { createDebugRouter } from './backend/src/api/routes/debug.routes';
 
 export async function createBackendApp(options?: { useStubAI?: boolean }): Promise<Express> {
   const app = express();
@@ -103,6 +104,7 @@ export async function createBackendApp(options?: { useStubAI?: boolean }): Promi
   app.use('/api/attempts', createAttemptsRouter(attemptService, submissionService));
   app.use('/api/submissions', createSubmissionsRouter(submissionService));
   app.use('/api/history', createHistoryRouter(attemptService, submissionRepo, evaluationRepo, problemRepo, submissionService));
+  app.use('/api/debug', createDebugRouter());
 
   // Error handling middleware
   app.use(errorHandler);

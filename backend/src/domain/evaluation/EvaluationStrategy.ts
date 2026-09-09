@@ -11,5 +11,5 @@ import { Submission } from '../entities/Submission';
  */
 export interface EvaluationStrategy {
   readonly type: EvaluatorType;
-  evaluate(submission: Submission, problem: Problem, rubric: Rubric): Promise<Evaluation>;
+  evaluate(submission: Submission, problem: Problem, rubric: Rubric, signal?: AbortSignal): Promise<Evaluation>;
 }

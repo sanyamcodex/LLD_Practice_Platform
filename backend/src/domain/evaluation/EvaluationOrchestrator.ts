@@ -88,53 +88,93 @@ export class EvaluationOrchestrator {
     let deterministicEval: Evaluation | null = null;
     let aiEval: Evaluation | null = null;
     let aiAvailable = false;
+    const aiAbortController = new AbortController();
+    let fallbackChosen = false;
+    let submissionFinished = false;
 
     try {
       // 1. Always run Deterministic evaluation first
       console.log(`[EvaluationOrchestrator] Running deterministic evaluator for submission ${submission.id}...`);
       deterministicEval = await this.deterministicEvaluator.evaluate(submission, problem, rubric);
-      await this.evaluationRepository.save(deterministicEval);
+      
+      // Prevent duplicate deterministic write if one already exists for this submission
+      const existingEvals = await this.evaluationRepository.findBySubmissionId(submission.id);
+      const existingDet = existingEvals.find((e) => e.evaluatorType === 'DETERMINISTIC');
+      if (!existingDet) {
+        await this.evaluationRepository.save(deterministicEval);
+      } else {
+        deterministicEval = existingDet;
+      }
       console.log(`[EvaluationOrchestrator] Deterministic evaluation completed for submission ${submission.id}.`);
 
-      // 2. Best-effort AI evaluation
+      // 2. Best-effort AI evaluation with explicit cancellation
       if (this.aiEvaluator) {
         try {
           console.log(`[EvaluationOrchestrator] Starting AI evaluation for submission ${submission.id}...`);
-          aiEval = await this.aiEvaluator.evaluate(submission, problem, rubric);
-          await this.evaluationRepository.save(aiEval);
-          aiAvailable = true;
-          console.log(`[EvaluationOrchestrator] Final AI success: Attached AI evaluation to submission ${submission.id}.`);
+          const rawAiEval = await this.aiEvaluator.evaluate(submission, problem, rubric, aiAbortController.signal);
+
+          // Prevent late Gemini responses from writing to database if fallback was already chosen or finished
+          if (fallbackChosen || submissionFinished || aiAbortController.signal.aborted) {
+            console.warn(`[EvaluationOrchestrator] Late Gemini response ignored for submission ${submission.id}; fallback already finalized.`);
+          } else {
+            // Prevent duplicate AI evaluation write
+            const currentEvals = await this.evaluationRepository.findBySubmissionId(submission.id);
+            const alreadyHasAI = currentEvals.some((e) => e.evaluatorType === 'AI' && !e.metadata?.fallback);
+            if (!alreadyHasAI) {
+              await this.evaluationRepository.save(rawAiEval);
+              aiEval = rawAiEval;
+              aiAvailable = true;
+              console.log(`[EvaluationOrchestrator] Final AI success: Attached AI evaluation to submission ${submission.id}.`);
+            } else {
+              aiEval = currentEvals.find((e) => e.evaluatorType === 'AI') || rawAiEval;
+              aiAvailable = true;
+            }
+          }
         } catch (aiError: any) {
+          // Explicitly abort any outstanding Gemini requests immediately
+          fallbackChosen = true;
+          aiAbortController.abort(new Error('FR14 fallback chosen: aborting outstanding AI requests'));
+
           console.warn(`[EvaluationOrchestrator] AI evaluator failed or timed out for submission ${submission.id}:`, aiError?.message || aiError);
           console.log(`[EvaluationOrchestrator] Deterministic evaluator invoked as fallback for submission ${submission.id} (FR14). Persisting deterministic evaluation and completing submission.`);
           aiAvailable = false;
           console.log(`[EvaluationOrchestrator] Final AI failure: AI evaluation marked unavailable for submission ${submission.id} (fallback record persisted).`);
 
-          // Create an explicit "AI evaluation unavailable" record so consumers see why AI wasn't attached
-          aiEval = {
-            id: `eval_ai_fallback_${Date.now()}`,
-            submissionId: submission.id,
-            evaluatorType: 'AI',
-            rubricResults: rubric.criteria.map((c) => ({
-              criterionKey: c.key,
-              score: deterministicEval?.rubricResults.find((dr) => dr.criterionKey === c.key)?.score || 3,
-              evidence: 'AI evaluation service temporarily unavailable or key unconfigured.',
-              concern: 'Detailed semantic evaluation was skipped due to AI service timeout/fallback.',
-              suggestion: 'Deterministic structural feedback is preserved above. Re-submit or retry when AI service is ready.',
-              confidence: 0.0,
-            })),
-            overallSummary: 'AI evaluation unavailable. Deterministic structural audit preserved; submission completed successfully.',
-            createdAt: new Date().toISOString(),
-            metadata: {
-              fallback: true,
-              error: aiError?.message || 'AI service unavailable',
-            },
-          };
-          await this.evaluationRepository.save(aiEval);
+          // Create an explicit "AI evaluation unavailable" record only once
+          const postErrorEvals = await this.evaluationRepository.findBySubmissionId(submission.id);
+          const alreadyHasFallback = postErrorEvals.some(
+            (e) => e.evaluatorType === 'AI' && (e.metadata?.fallback === true || e.id.includes('fallback'))
+          );
+
+          if (!alreadyHasFallback) {
+            aiEval = {
+              id: `eval_ai_fallback_${Date.now()}`,
+              submissionId: submission.id,
+              evaluatorType: 'AI',
+              rubricResults: rubric.criteria.map((c) => ({
+                criterionKey: c.key,
+                score: deterministicEval?.rubricResults.find((dr) => dr.criterionKey === c.key)?.score || 3,
+                evidence: 'AI evaluation service temporarily unavailable or key unconfigured.',
+                concern: 'Detailed semantic evaluation was skipped due to AI service timeout/fallback.',
+                suggestion: 'Deterministic structural feedback is preserved above. Re-submit or retry when AI service is ready.',
+                confidence: 0.0,
+              })),
+              overallSummary: 'AI evaluation unavailable. Deterministic structural audit preserved; submission completed successfully.',
+              createdAt: new Date().toISOString(),
+              metadata: {
+                fallback: true,
+                error: aiError?.message || 'AI service unavailable',
+              },
+            };
+            await this.evaluationRepository.save(aiEval);
+          } else {
+            aiEval = postErrorEvals.find((e) => e.evaluatorType === 'AI') || null;
+          }
         }
       }
 
       // 3. Mark submission COMPLETED
+      submissionFinished = true;
       stateMachine.transition('COMPLETED');
       await this.submissionRepository.updateStatus(submission.id, 'COMPLETED');
 
@@ -146,6 +186,8 @@ export class EvaluationOrchestrator {
         status: 'COMPLETED',
       };
     } catch (fatalError: any) {
+      submissionFinished = true;
+      aiAbortController.abort(new Error('Fatal error during evaluation'));
       console.error(`[EvaluationOrchestrator] Fatal error evaluating submission ${submission.id}:`, fatalError);
       if (stateMachine.canTransitionTo('FAILED')) {
         stateMachine.transition('FAILED');
@@ -159,6 +201,7 @@ export class EvaluationOrchestrator {
         error: fatalError?.message,
       };
     } finally {
+      aiAbortController.abort(new Error('EvaluationOrchestrator cycle complete'));
       this.activeSubmissions.delete(submission.id);
     }
   }

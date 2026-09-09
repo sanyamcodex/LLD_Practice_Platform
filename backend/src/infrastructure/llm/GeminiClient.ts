@@ -157,7 +157,7 @@ export class GeminiClient implements LLMClient {
 
   async evaluateDesign(request: LLMClientEvaluationRequest): Promise<LLMClientEvaluationResponse> {
     const ai = this.getClient();
-    const { problem, submission, rubric } = request;
+    const { problem, submission, rubric, signal } = request;
     const content = submission.contentSnapshot;
 
     const criteriaPrompt = rubric.criteria
@@ -273,11 +273,58 @@ ${criteriaPrompt}
     for (let planIndex = 0; planIndex < modelPlans.length; planIndex++) {
       const plan = modelPlans[planIndex];
 
+      if (signal?.aborted) {
+        console.log(`[GeminiClient] Evaluation aborted by caller signal before invoking model=${plan.model}`);
+        throw signal.reason || new Error('Evaluation cancelled by caller');
+      }
+
       if (!plan.isPrimary) {
         console.log(`[GeminiClient] Primary model failed; invoking fallback model=${plan.model}`);
       }
 
       for (let attempt = 1; attempt <= plan.maxAttempts; attempt++) {
+        if (signal?.aborted) {
+          console.log(`[GeminiClient] Evaluation aborted by caller signal before attempt=${attempt} of model=${plan.model}`);
+          throw signal.reason || new Error('Evaluation cancelled by caller');
+        }
+
+        const attemptController = new AbortController();
+        const onParentAbort = () => {
+          attemptController.abort(signal?.reason || new Error('Evaluation cancelled by caller'));
+        };
+
+        if (signal) {
+          if (signal.aborted) {
+            onParentAbort();
+          } else {
+            signal.addEventListener('abort', onParentAbort, { once: true });
+          }
+        }
+
+        let attemptTimer: NodeJS.Timeout | undefined;
+        let isAttemptTimeout = false;
+
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          attemptTimer = setTimeout(() => {
+            isAttemptTimeout = true;
+            const timeoutErr = new Error(`Gemini API request (${plan.model}) timed out after ${plan.timeoutMs}ms`);
+            attemptController.abort(timeoutErr);
+            reject(timeoutErr);
+          }, plan.timeoutMs);
+        });
+
+        const parentAbortPromise = new Promise<never>((_, reject) => {
+          if (signal?.aborted) {
+            reject(signal.reason || new Error('Evaluation cancelled by caller'));
+            return;
+          }
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              reject(signal.reason || new Error('Evaluation cancelled by caller'));
+            }, { once: true });
+          }
+        });
+
         try {
           console.log(`[GeminiClient] Request started: model=${plan.model} attempt=${attempt}/${plan.maxAttempts} timeout=${plan.timeoutMs}ms`);
 
@@ -289,14 +336,11 @@ ${criteriaPrompt}
                 'You are an authoritative Low-Level Design evaluator. Always provide constructive, evidence-based feedback formatted as valid JSON adhering to the exact responseSchema.',
               responseMimeType: 'application/json',
               responseSchema,
+              abortSignal: attemptController.signal,
             },
           });
 
-          const response = await withTimeout<any>(
-            generatePromise,
-            plan.timeoutMs,
-            `Gemini API request (${plan.model})`
-          );
+          const response = await Promise.race([generatePromise, timeoutPromise, parentAbortPromise]);
 
           const text = response?.text;
           if (!text) {
@@ -312,28 +356,51 @@ ${criteriaPrompt}
           console.log(`[GeminiClient] Final AI success: model=${plan.model}`);
           return parsed;
         } catch (err: any) {
-          lastError = err;
-          const statusOrCode = extractStatusOrCode(err);
+          if (signal?.aborted) {
+            console.log(`[GeminiClient] Evaluation aborted by caller signal; stopping immediately.`);
+            throw signal.reason || err;
+          }
+
+          const actualError = isAttemptTimeout
+            ? new Error(`Gemini API request (${plan.model}) timed out after ${plan.timeoutMs}ms`)
+            : err;
+
+          lastError = actualError;
+          const statusOrCode = extractStatusOrCode(actualError);
 
           // 400 / 401 / 403 client errors should not be retried repeatedly
-          if (isNonRetryableClientError(err)) {
-            console.warn(`[GeminiClient] Client error: model=${plan.model} status=${statusOrCode} error=${err?.message || err}`);
+          if (isNonRetryableClientError(actualError)) {
+            console.warn(`[GeminiClient] Client error: model=${plan.model} status=${statusOrCode} error=${actualError?.message || actualError}`);
             break;
           }
 
-          if (isTransientError(err)) {
+          if (isTransientError(actualError)) {
             console.warn(`[GeminiClient] Transient failure: model=${plan.model} status=${statusOrCode}`);
 
             if (attempt < plan.maxAttempts) {
               const delayMs = calculateBackoffWithJitter(attempt, this.options.baseBackoffMs, this.options.maxBackoffMs);
               console.log(`[GeminiClient] Retrying model=${plan.model} after ${delayMs}ms`);
-              await new Promise((resolve) => setTimeout(resolve, delayMs));
+              await new Promise<void>((resolve, reject) => {
+                const sleepTimer = setTimeout(resolve, delayMs);
+                if (signal) {
+                  const onSleepAbort = () => {
+                    clearTimeout(sleepTimer);
+                    reject(signal.reason || new Error('Evaluation cancelled by caller'));
+                  };
+                  signal.addEventListener('abort', onSleepAbort, { once: true });
+                }
+              });
             } else {
               break;
             }
           } else {
-            console.warn(`[GeminiClient] AI failure (non-transient): model=${plan.model} error=${err?.message || err}`);
+            console.warn(`[GeminiClient] AI failure (non-transient): model=${plan.model} error=${actualError?.message || actualError}`);
             break;
+          }
+        } finally {
+          if (attemptTimer) clearTimeout(attemptTimer);
+          if (signal) {
+            signal.removeEventListener('abort', onParentAbort);
           }
         }
       }

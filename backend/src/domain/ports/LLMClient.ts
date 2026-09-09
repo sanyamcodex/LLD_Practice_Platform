@@ -7,6 +7,7 @@ export interface LLMClientEvaluationRequest {
   problem: Problem;
   submission: Submission;
   rubric: Rubric;
+  signal?: AbortSignal;
 }
 
 export interface LLMClientEvaluationResponse {
