@@ -2,18 +2,94 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { config } from '../../config/env';
 import { LLMClient, LLMClientEvaluationRequest, LLMClientEvaluationResponse } from '../../domain/ports/LLMClient';
 
+export interface ModelPlan {
+  model: string;
+  timeoutMs: number;
+  maxAttempts: number;
+  isPrimary: boolean;
+}
+
+export interface GeminiClientOptions {
+  apiKey?: string;
+  primaryModel?: string;
+  primaryTimeoutMs?: number;
+  primaryMaxAttempts?: number;
+  fallbackModel?: string;
+  fallbackTimeoutMs?: number;
+  fallbackMaxAttempts?: number;
+  backoffBaseMs?: number;
+  aiClient?: any;
+}
+
+export function is503OrUnavailable(err: any): boolean {
+  if (!err) return false;
+  const status = err?.status || err?.code || err?.statusCode;
+  if (status === 503 || status === 'UNAVAILABLE') return true;
+  const msg = `${err?.message || ''} ${err?.statusText || ''} ${typeof err === 'string' ? err : ''}`.toLowerCase();
+  return (
+    msg.includes('503') ||
+    msg.includes('unavailable') ||
+    msg.includes('high demand') ||
+    msg.includes('temporarily overloaded') ||
+    msg.includes('service unavailable')
+  );
+}
+
+export function isTransientError(err: any): boolean {
+  if (is503OrUnavailable(err)) return true;
+  const status = err?.status || err?.code || err?.statusCode;
+  if (status === 429 || status === 'RESOURCE_EXHAUSTED') return true;
+  const msg = `${err?.message || ''} ${err?.statusText || ''} ${typeof err === 'string' ? err : ''}`.toLowerCase();
+  return (
+    msg.includes('429') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('rate limit') ||
+    msg.includes('timed out') ||
+    msg.includes('timeout')
+  );
+}
+
+export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operationName: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${operationName} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 /**
  * GeminiClient
- * Implements LLMClient port.
- * Communicates with Google Gemini API requesting structured JSON output conforming to the 7-criterion rubric.
- * Uses official @google/genai SDK on the server side with structured responseSchema.
+ * Implements LLMClient port with resilient multi-model cascading fallback,
+ * bounded retries with exponential backoff on HTTP 503 / UNAVAILABLE, and per-call timeouts.
  */
 export class GeminiClient implements LLMClient {
-  private ai: GoogleGenAI | null = null;
+  private ai: any = null;
+  public readonly options: Required<Omit<GeminiClientOptions, 'apiKey' | 'aiClient'>> & { apiKey?: string };
 
-  private getClient(): GoogleGenAI {
+  constructor(options: GeminiClientOptions = {}) {
+    this.options = {
+      apiKey: options.apiKey,
+      primaryModel: options.primaryModel || 'gemini-3.8-flash',
+      primaryTimeoutMs: options.primaryTimeoutMs ?? 9000,
+      primaryMaxAttempts: options.primaryMaxAttempts ?? 2,
+      fallbackModel: options.fallbackModel || 'gemini-3.7-flash',
+      fallbackTimeoutMs: options.fallbackTimeoutMs ?? 8000,
+      fallbackMaxAttempts: options.fallbackMaxAttempts ?? 1,
+      backoffBaseMs: options.backoffBaseMs ?? 1000,
+    };
+    if (options.aiClient) {
+      this.ai = options.aiClient;
+    }
+  }
+
+  private getClient(): any {
     if (!this.ai) {
-      const apiKey = config.geminiApiKey;
+      const apiKey = this.options.apiKey || config.geminiApiKey;
       if (!apiKey) {
         throw new Error('GEMINI_API_KEY is not configured in the environment.');
       }
@@ -124,32 +200,39 @@ ${criteriaPrompt}
       required: ['overallSummary', 'results'],
     };
 
-    // Candidate models in preference order: primary gemini-3.8-flash, followed by robust fallbacks
-    const CANDIDATE_MODELS = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+    // Candidate models in strict preference order:
+    // 1. Primary model (gemini-3.8-flash, 9s timeout, 2 attempts max with exponential backoff on 503)
+    // 2. Fallback stable model (gemini-3.7-flash, 8s timeout, 1 short attempt, NO -latest alias)
+    const modelPlans: ModelPlan[] = [
+      {
+        model: this.options.primaryModel,
+        timeoutMs: this.options.primaryTimeoutMs,
+        maxAttempts: this.options.primaryMaxAttempts,
+        isPrimary: true,
+      },
+      {
+        model: this.options.fallbackModel,
+        timeoutMs: this.options.fallbackTimeoutMs,
+        maxAttempts: this.options.fallbackMaxAttempts,
+        isPrimary: false,
+      },
+    ];
+
     let lastError: any = null;
 
-    const isTransient = (err: any): boolean => {
-      const msg = `${err?.message || ''} ${typeof err === 'string' ? err : JSON.stringify(err)}`;
-      const status = err?.status || err?.code || err?.statusCode;
-      return (
-        status === 503 ||
-        status === 429 ||
-        status === 'UNAVAILABLE' ||
-        status === 'RESOURCE_EXHAUSTED' ||
-        msg.includes('503') ||
-        msg.includes('429') ||
-        msg.includes('high demand') ||
-        msg.includes('UNAVAILABLE') ||
-        msg.includes('temporarily') ||
-        msg.includes('exhausted')
-      );
-    };
+    for (let planIndex = 0; planIndex < modelPlans.length; planIndex++) {
+      const plan = modelPlans[planIndex];
 
-    for (const model of CANDIDATE_MODELS) {
-      for (let attempt = 1; attempt <= 2; attempt++) {
+      if (!plan.isPrimary) {
+        console.log(`[GeminiClient] Primary model ${modelPlans[0].model} failed. Fallback model invoked: ${plan.model}...`);
+      }
+
+      for (let attempt = 1; attempt <= plan.maxAttempts; attempt++) {
         try {
-          const response = await ai.models.generateContent({
-            model,
+          console.log(`[GeminiClient] API request started for model ${plan.model} (attempt ${attempt}/${plan.maxAttempts}, timeout ${plan.timeoutMs}ms)...`);
+
+          const generatePromise = ai.models.generateContent({
+            model: plan.model,
             contents: prompt,
             config: {
               systemInstruction:
@@ -159,28 +242,44 @@ ${criteriaPrompt}
             },
           });
 
-          const text = response.text;
+          const response = await withTimeout<any>(
+            generatePromise,
+            plan.timeoutMs,
+            `Gemini API request (${plan.model})`
+          );
+
+          const text = response?.text;
           if (!text) {
-            throw new Error(`Empty response received from Gemini API with model ${model}`);
+            throw new Error(`Empty response received from Gemini API with model ${plan.model}`);
           }
 
           const parsed = JSON.parse(text) as LLMClientEvaluationResponse;
+          parsed.modelUsed = plan.model;
+          console.log(`[GeminiClient] Final AI success: Received valid evaluation from model ${plan.model}.`);
           return parsed;
         } catch (err: any) {
           lastError = err;
-          console.warn(`[GeminiClient] Model ${model} attempt ${attempt} failed:`, err?.message || err);
 
-          if (attempt === 1 && isTransient(err)) {
-            // Brief backoff before re-attempting with the same model
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+          if (is503OrUnavailable(err)) {
+            console.warn(`[GeminiClient] HTTP 503 UNAVAILABLE received for model ${plan.model} (attempt ${attempt}/${plan.maxAttempts}): ${err?.message || err}`);
           } else {
-            // Move on to the next candidate model
+            console.warn(`[GeminiClient] Model ${plan.model} attempt ${attempt}/${plan.maxAttempts} failed: ${err?.message || err}`);
+          }
+
+          if (attempt < plan.maxAttempts && isTransientError(err)) {
+            const delayMs = this.options.backoffBaseMs * Math.pow(2, attempt - 1);
+            console.log(`[GeminiClient] Retrying primary model ${plan.model} after backoff of ${delayMs}ms (attempt ${attempt + 1}/${plan.maxAttempts})...`);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          } else {
+            // No more retries for this model
             break;
           }
         }
       }
     }
 
-    throw lastError || new Error('All candidate Gemini models failed evaluation.');
+    const modelNames = modelPlans.map((p) => p.model).join(', ');
+    console.error(`[GeminiClient] Final AI failure: All candidate models (${modelNames}) failed or unavailable.`);
+    throw lastError || new Error(`All candidate AI models (${modelNames}) failed.`);
   }
 }

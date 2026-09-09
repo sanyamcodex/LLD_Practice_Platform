@@ -54,18 +54,24 @@ export class EvaluationOrchestrator {
 
     try {
       // 1. Always run Deterministic evaluation first
+      console.log(`[EvaluationOrchestrator] Running deterministic evaluator for submission ${submission.id}...`);
       deterministicEval = await this.deterministicEvaluator.evaluate(submission, problem, rubric);
       await this.evaluationRepository.save(deterministicEval);
+      console.log(`[EvaluationOrchestrator] Deterministic evaluation completed for submission ${submission.id}.`);
 
       // 2. Best-effort AI evaluation
       if (this.aiEvaluator) {
         try {
+          console.log(`[EvaluationOrchestrator] Starting AI evaluation for submission ${submission.id}...`);
           aiEval = await this.aiEvaluator.evaluate(submission, problem, rubric);
           await this.evaluationRepository.save(aiEval);
           aiAvailable = true;
+          console.log(`[EvaluationOrchestrator] Final AI success: Attached AI evaluation to submission ${submission.id}.`);
         } catch (aiError: any) {
           console.warn(`[EvaluationOrchestrator] AI evaluator failed or timed out for submission ${submission.id}:`, aiError?.message || aiError);
+          console.log(`[EvaluationOrchestrator] Deterministic evaluator invoked as fallback for submission ${submission.id} (FR14). Persisting deterministic evaluation and completing submission.`);
           aiAvailable = false;
+          console.log(`[EvaluationOrchestrator] Final AI failure: AI evaluation marked unavailable for submission ${submission.id} (fallback record persisted).`);
 
           // Create an explicit "AI evaluation unavailable" record so consumers see why AI wasn't attached
           aiEval = {

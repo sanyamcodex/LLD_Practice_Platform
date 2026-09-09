@@ -144,4 +144,64 @@ describe('EvaluationOrchestrator', () => {
     expect(result.aiEvaluation?.overallSummary).toBe('High-quality design with clean decoupling.');
     expect(savedEvaluations.length).toBe(2);
   });
+
+  it('All AI models unavailable => immediately falls back to deterministic evaluator and completes', async () => {
+    const { mockEvaluationRepo, mockSubmissionRepo, savedEvaluations, submissionStatusMap } = createMockRepos();
+
+    const deterministicEvaluator = new DeterministicEvaluator();
+    const allModelsUnavailableAI: EvaluationStrategy = {
+      type: 'AI',
+      evaluate: vi.fn().mockRejectedValue(new Error('All candidate AI models (gemini-3.8-flash, gemini-3.7-flash) failed.')),
+    };
+
+    const orchestrator = new EvaluationOrchestrator(
+      deterministicEvaluator,
+      allModelsUnavailableAI,
+      mockEvaluationRepo,
+      mockSubmissionRepo
+    );
+
+    const result = await orchestrator.evaluateSubmission(
+      mockSubmission,
+      mockProblem,
+      STANDARD_LLD_RUBRIC
+    );
+
+    expect(result.status).toBe('COMPLETED');
+    expect(submissionStatusMap[mockSubmission.id]).toBe('COMPLETED');
+    expect(result.aiAvailable).toBe(false);
+    expect(result.deterministicEvaluation).toBeDefined();
+    expect(result.deterministicEvaluation.evaluatorType).toBe('DETERMINISTIC');
+
+    // Deterministic results preserved
+    expect(result.deterministicEvaluation.rubricResults.length).toBe(STANDARD_LLD_RUBRIC.criteria.length);
+  });
+
+  it('AI evaluator timeout does not block submission indefinitely and resolves to COMPLETED', async () => {
+    const { mockEvaluationRepo, mockSubmissionRepo, savedEvaluations, submissionStatusMap } = createMockRepos();
+
+    const deterministicEvaluator = new DeterministicEvaluator();
+    const timingOutAI: EvaluationStrategy = {
+      type: 'AI',
+      evaluate: vi.fn().mockRejectedValue(new Error('AI Evaluation timed out after 28000ms')),
+    };
+
+    const orchestrator = new EvaluationOrchestrator(
+      deterministicEvaluator,
+      timingOutAI,
+      mockEvaluationRepo,
+      mockSubmissionRepo
+    );
+
+    const result = await orchestrator.evaluateSubmission(
+      mockSubmission,
+      mockProblem,
+      STANDARD_LLD_RUBRIC
+    );
+
+    expect(result.status).toBe('COMPLETED');
+    expect(submissionStatusMap[mockSubmission.id]).toBe('COMPLETED');
+    expect(result.aiAvailable).toBe(false);
+    expect(result.deterministicEvaluation.rubricResults.length).toBeGreaterThan(0);
+  });
 });

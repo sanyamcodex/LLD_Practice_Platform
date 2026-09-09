@@ -12,6 +12,7 @@ export interface LLMClientEvaluationRequest {
 export interface LLMClientEvaluationResponse {
   results: CriterionResult[];
   overallSummary: string;
+  modelUsed?: string;
 }
 
 export interface LLMClient {

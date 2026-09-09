@@ -18,13 +18,14 @@ export class AIRubricEvaluator implements EvaluationStrategy {
 
   constructor(
     private readonly llmClient: LLMClient,
-    private readonly timeoutMs: number = 20000
+    private readonly timeoutMs: number = 28000
   ) {}
 
   async evaluate(submission: Submission, problem: Problem, rubric: Rubric): Promise<Evaluation> {
     // Run with timeout promise
+    let timer: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error(`AI Evaluation timed out after ${this.timeoutMs}ms`)), this.timeoutMs);
+      timer = setTimeout(() => reject(new Error(`AI Evaluation timed out after ${this.timeoutMs}ms`)), this.timeoutMs);
     });
 
     const evalPromise = this.llmClient.evaluateDesign({
@@ -33,12 +34,17 @@ export class AIRubricEvaluator implements EvaluationStrategy {
       rubric,
     });
 
-    const response = await Promise.race([evalPromise, timeoutPromise]);
+    let response: any;
+    try {
+      response = await Promise.race([evalPromise, timeoutPromise]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
 
     // Ensure all 7 rubric criteria have representation
     const results = response.results || [];
     for (const criterion of rubric.criteria) {
-      if (!results.some((r) => r.criterionKey === criterion.key)) {
+      if (!results.some((r: any) => r.criterionKey === criterion.key)) {
         results.push({
           criterionKey: criterion.key,
           score: 3,
@@ -58,7 +64,7 @@ export class AIRubricEvaluator implements EvaluationStrategy {
       overallSummary: response.overallSummary || 'AI Rubric Evaluation completed.',
       createdAt: new Date().toISOString(),
       metadata: {
-        model: 'gemini-3.8-flash',
+        model: response.modelUsed || 'gemini-3.8-flash',
         evaluator: 'AIRubricEvaluator',
       },
     };

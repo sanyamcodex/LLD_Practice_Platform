@@ -51,7 +51,7 @@ Initially, when the Gemini API returned an error (such as a transient `503 Servi
 - **Rejected**: Silently swallowing API errors or returning fake mock scores as if they were genuine Gemini evaluations.
 - **Accepted**:
   - Implemented explicit error detection and proper error bubbling.
-  - Added a **multi-model cascading fallback** in `GeminiClient` (`gemini-3.8-flash` $\rightarrow$ `gemini-flash-latest` $\rightarrow$ `gemini-3.1-flash-lite`).
+  - Added a **bounded multi-model cascading fallback** in `GeminiClient` (`gemini-3.8-flash` primary with 9s timeout & exponential backoff $\rightarrow$ `gemini-3.7-flash` stable fallback with 8s timeout, strictly avoiding unstable `-latest` aliases).
   - Added exponential backoff retry for transient error codes (`503`, `429`, `UNAVAILABLE`, `RESOURCE_EXHAUSTED`).
   - Updated `EvaluationOrchestrator` to catch definitive failures, log the incident, and gracefully complete the submission with the verified deterministic evaluation preserved.
   - Added a dedicated `POST /api/submissions/:id/reevaluate` endpoint and a **"Retry AI Analysis"** button in the UI.
